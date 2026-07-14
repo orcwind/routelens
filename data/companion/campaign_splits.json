@@ -1,0 +1,636 @@
+{
+  "第三章": [
+    {
+      "index": 1,
+      "area_tw": "風沙沼澤",
+      "area_en": "Sandswept Marsh",
+      "display_tw": "風沙沼澤",
+      "display_cn": "風沙沼澤",
+      "is_town": false
+    },
+    {
+      "index": 2,
+      "area_tw": "叢林遺跡",
+      "area_en": "Jungle Ruins",
+      "display_tw": "叢林遺跡",
+      "display_cn": "叢林遺跡",
+      "is_town": false
+    },
+    {
+      "index": 3,
+      "area_tw": "劇毒墓穴",
+      "area_en": "Venomous Vault",
+      "display_tw": "劇毒墓穴",
+      "display_cn": "劇毒墓穴",
+      "is_town": false
+    },
+    {
+      "index": 4,
+      "area_tw": "感染荒地",
+      "area_en": "Blighted Wasteland",
+      "display_tw": "感染荒地",
+      "display_cn": "感染荒地",
+      "is_town": false
+    },
+    {
+      "index": 5,
+      "area_tw": "神祕避難所",
+      "area_en": "Mystic Refuge",
+      "display_tw": "神祕避難所",
+      "display_cn": "神祕避難所",
+      "is_town": false
+    },
+    {
+      "index": 6,
+      "area_tw": "龍蜥濕地",
+      "area_en": "Drake Wetlands",
+      "display_tw": "龍蜥濕地",
+      "display_cn": "龍蜥濕地",
+      "is_town": false
+    },
+    {
+      "index": 7,
+      "area_tw": "吉卡尼的機械迷城",
+      "area_en": "Jiquani's Mechanical Metropolis",
+      "display_tw": "吉卡尼的機械迷城",
+      "display_cn": "吉卡尼的機械迷城",
+      "is_town": false
+    },
+    {
+      "index": 8,
+      "area_tw": "吉卡尼的聖域",
+      "area_en": "Jiquani's Sanctum",
+      "display_tw": "吉卡尼的聖域",
+      "display_cn": "吉卡尼的聖域",
+      "is_town": false
+    },
+    {
+      "index": 9,
+      "area_tw": "瑪特蘭水道",
+      "area_en": "Matlan Waterways",
+      "display_tw": "瑪特蘭水道",
+      "display_cn": "瑪特蘭水道",
+      "is_town": false
+    },
+    {
+      "index": 10,
+      "area_tw": "阿札克泥沼",
+      "area_en": "Azak Bog",
+      "display_tw": "阿札克泥沼",
+      "display_cn": "阿札克泥沼",
+      "is_town": false
+    },
+    {
+      "index": 11,
+      "area_tw": "淹沒之城",
+      "area_en": "Sunken City",
+      "display_tw": "淹沒之城",
+      "display_cn": "淹沒之城",
+      "is_town": false
+    },
+    {
+      "index": 12,
+      "area_tw": "熔岩寶庫",
+      "area_en": "Molten Vault",
+      "display_tw": "熔岩寶庫",
+      "display_cn": "熔岩寶庫",
+      "is_town": false
+    },
+    {
+      "index": 13,
+      "area_tw": "污垢頂峰",
+      "area_en": "Peak of Filth",
+      "display_tw": "污垢頂峰",
+      "display_cn": "污垢頂峰",
+      "is_town": false
+    },
+    {
+      "index": 14,
+      "area_tw": "科佩克神殿",
+      "area_en": "Temple of Kopec",
+      "display_tw": "科佩克神殿",
+      "display_cn": "科佩克神殿",
+      "is_town": false
+    },
+    {
+      "index": 15,
+      "area_tw": "奧札爾",
+      "area_en": "Ogham Farmlands",
+      "display_tw": "奧札爾",
+      "display_cn": "奧札爾",
+      "is_town": false
+    },
+    {
+      "index": 16,
+      "area_tw": "阿戈拉",
+      "area_en": "Agora",
+      "display_tw": "阿戈拉",
+      "display_cn": "阿戈拉",
+      "is_town": false
+    }
+  ],
+  "第四章": [
+    {
+      "index": 1,
+      "area_tw": "阿戈拉",
+      "area_en": "Agora",
+      "display_tw": "阿戈拉",
+      "display_cn": "阿戈拉",
+      "is_town": false
+    },
+    {
+      "index": 2,
+      "area_tw": "漆黑密室",
+      "area_en": "Chamber of Darkness",
+      "display_tw": "漆黑密室",
+      "display_cn": "漆黑密室",
+      "is_town": false
+    },
+    {
+      "index": 3,
+      "area_tw": "叢林遺跡",
+      "area_en": "Jungle Ruins",
+      "display_tw": "叢林遺跡",
+      "display_cn": "叢林遺跡",
+      "is_town": false
+    },
+    {
+      "index": 4,
+      "area_tw": "凱吉灣",
+      "area_en": "Keth Bay",
+      "display_tw": "凱吉灣",
+      "display_cn": "凱吉灣",
+      "is_town": false
+    },
+    {
+      "index": 5,
+      "area_tw": "旅程之末",
+      "area_en": "Journey's End",
+      "display_tw": "旅程之末",
+      "display_cn": "旅程之末",
+      "is_town": false
+    },
+    {
+      "index": 6,
+      "area_tw": "伯勞鳥之島",
+      "area_en": "Shrike Island",
+      "display_tw": "伯勞鳥之島",
+      "display_cn": "伯勞鳥之島",
+      "is_town": false
+    },
+    {
+      "index": 7,
+      "area_tw": "尼加卡努",
+      "area_en": "Ngakanu",
+      "display_tw": "尼加卡努",
+      "display_cn": "尼加卡努",
+      "is_town": false
+    },
+    {
+      "index": 8,
+      "area_tw": "瓦卡帕努島",
+      "area_en": "Wakapu Island",
+      "display_tw": "瓦卡帕努島",
+      "display_cn": "瓦卡帕努島",
+      "is_town": false
+    },
+    {
+      "index": 9,
+      "area_tw": "吟謠洞窟",
+      "area_en": "Singing Caverns",
+      "display_tw": "吟謠洞窟",
+      "display_cn": "吟謠洞窟",
+      "is_town": false
+    },
+    {
+      "index": 10,
+      "area_tw": "悉妮蔻拉之眼",
+      "area_en": "Eye of Synckra",
+      "display_tw": "悉妮蔻拉之眼",
+      "display_cn": "悉妮蔻拉之眼",
+      "is_town": false
+    },
+    {
+      "index": 11,
+      "area_tw": "亡者之殿",
+      "area_en": "Hall of the Dead",
+      "display_tw": "亡者之殿",
+      "display_cn": "亡者之殿",
+      "is_town": false
+    },
+    {
+      "index": 12,
+      "area_tw": "祖靈的試煉",
+      "area_en": "Trial of the Ancestors",
+      "display_tw": "祖靈的試煉",
+      "display_cn": "祖靈的試煉",
+      "is_town": false
+    },
+    {
+      "index": 13,
+      "area_tw": "金氏島",
+      "area_en": "Kin Island",
+      "display_tw": "金氏島",
+      "display_cn": "金氏島",
+      "is_town": false
+    },
+    {
+      "index": 14,
+      "area_tw": "火山迷窟",
+      "area_en": "Volcanic Caverns",
+      "display_tw": "火山迷窟",
+      "display_cn": "火山迷窟",
+      "is_town": false
+    }
+  ],
+  "第六章": [
+    {
+      "index": 1,
+      "area_tw": "金氏島",
+      "area_en": "Kin Island",
+      "display_tw": "金氏島",
+      "display_cn": "金氏島",
+      "is_town": false
+    },
+    {
+      "index": 2,
+      "area_tw": "廢棄監獄",
+      "area_en": "Abandoned Prison",
+      "display_tw": "廢棄監獄",
+      "display_cn": "廢棄監獄",
+      "is_town": false
+    },
+    {
+      "index": 3,
+      "area_tw": "單獨禁閉室",
+      "area_en": "Solitary Confinement",
+      "display_tw": "單獨禁閉室",
+      "display_cn": "單獨禁閉室",
+      "is_town": false
+    },
+    {
+      "index": 4,
+      "area_tw": "尼加卡努",
+      "area_en": "Ngakanu",
+      "display_tw": "尼加卡努",
+      "display_cn": "尼加卡努",
+      "is_town": false
+    },
+    {
+      "index": 5,
+      "area_tw": "阿拉塔斯",
+      "area_en": "Ararat",
+      "display_tw": "阿拉塔斯",
+      "display_cn": "阿拉塔斯",
+      "is_town": false
+    },
+    {
+      "index": 6,
+      "area_tw": "挖掘",
+      "area_en": "The Excavation",
+      "display_tw": "挖掘",
+      "display_cn": "挖掘",
+      "is_town": false
+    },
+    {
+      "index": 7,
+      "area_tw": "無盡深淵",
+      "area_en": "Endless Abyss",
+      "display_tw": "無盡深淵",
+      "display_cn": "無盡深淵",
+      "is_town": false
+    },
+    {
+      "index": 8,
+      "area_tw": "部族之心",
+      "area_en": "Heart of the Tribe",
+      "display_tw": "部族之心",
+      "display_cn": "部族之心",
+      "is_town": false
+    },
+    {
+      "index": 9,
+      "area_tw": "林間空地",
+      "area_en": "Forest Clearing",
+      "display_tw": "林間空地",
+      "display_cn": "林間空地",
+      "is_town": false
+    },
+    {
+      "index": 10,
+      "area_tw": "灰燼森林",
+      "area_en": "Ashen Forest",
+      "display_tw": "灰燼森林",
+      "display_cn": "灰燼森林",
+      "is_town": false
+    },
+    {
+      "index": 11,
+      "area_tw": "庫萊亞村",
+      "area_en": "Kuleya Village",
+      "display_tw": "庫萊亞村",
+      "display_cn": "庫萊亞村",
+      "is_town": false
+    },
+    {
+      "index": 12,
+      "area_tw": "冰川湖泊",
+      "area_en": "Glacial Lake",
+      "display_tw": "冰川湖泊",
+      "display_cn": "冰川湖泊",
+      "is_town": false
+    },
+    {
+      "index": 13,
+      "area_tw": "庫萊亞山巔",
+      "area_en": "Kuleya Peak",
+      "display_tw": "庫萊亞山巔",
+      "display_cn": "庫萊亞山巔",
+      "is_town": false
+    },
+    {
+      "index": 14,
+      "area_tw": "瓦爾遺跡",
+      "area_en": "Vaal Ruins",
+      "display_tw": "瓦爾遺跡",
+      "display_cn": "瓦爾遺跡",
+      "is_town": false
+    },
+    {
+      "index": 15,
+      "area_tw": "阿茲里的神廟",
+      "area_en": "Temple of Atziri",
+      "display_tw": "阿茲里的神廟",
+      "display_cn": "阿茲里的神廟",
+      "is_town": false
+    },
+    {
+      "index": 16,
+      "area_tw": "蝕刻溪谷",
+      "area_en": "Etched Ravine",
+      "display_tw": "蝕刻溪谷",
+      "display_cn": "蝕刻溪谷",
+      "is_town": false
+    },
+    {
+      "index": 17,
+      "area_tw": "庫阿西克寶庫",
+      "area_en": "Kuahsiq Vault",
+      "display_tw": "庫阿西克寶庫",
+      "display_cn": "庫阿西克寶庫",
+      "is_town": false
+    },
+    {
+      "index": 18,
+      "area_tw": "狂嗥洞穴",
+      "area_en": "Howling Caves",
+      "display_tw": "狂嗥洞穴",
+      "display_cn": "狂嗥洞穴",
+      "is_town": false
+    }
+  ],
+  "第一章": [
+    {
+      "index": 1,
+      "area_tw": "河岸",
+      "area_en": "The Riverbank",
+      "display_tw": "河岸",
+      "display_cn": "河岸",
+      "is_town": false
+    },
+    {
+      "index": 2,
+      "area_tw": "皆伐",
+      "area_en": "Clearfell",
+      "display_tw": "皆伐",
+      "display_cn": "皆伐",
+      "is_town": false
+    },
+    {
+      "index": 3,
+      "area_tw": "葛瑞爾林",
+      "area_en": "The Grelwood",
+      "display_tw": "葛瑞爾林",
+      "display_cn": "葛瑞爾林",
+      "is_town": false
+    },
+    {
+      "index": 4,
+      "area_tw": "赤谷",
+      "area_en": "The Red Vale",
+      "display_tw": "赤谷",
+      "display_cn": "赤谷",
+      "is_town": false
+    },
+    {
+      "index": 5,
+      "area_tw": "纏縛陰林",
+      "area_en": "The Grim Tangle",
+      "display_tw": "纏縛陰林",
+      "display_cn": "纏縛陰林",
+      "is_town": false
+    },
+    {
+      "index": 6,
+      "area_tw": "不朽帝國之墓",
+      "area_en": "Cemetery of the Eternals",
+      "display_tw": "不朽帝國之墓",
+      "display_cn": "不朽帝國之墓",
+      "is_town": false
+    },
+    {
+      "index": 7,
+      "area_tw": "配偶的墓室",
+      "area_en": "Tomb of the Consort",
+      "display_tw": "配偶的墓室",
+      "display_cn": "配偶的墓室",
+      "is_town": false
+    },
+    {
+      "index": 8,
+      "area_tw": "政務官陵墓",
+      "area_en": "Mausoleum of the Praetor",
+      "display_tw": "政務官陵墓",
+      "display_cn": "政務官陵墓",
+      "is_town": false
+    },
+    {
+      "index": 9,
+      "area_tw": "獵場",
+      "area_en": "Hunting Grounds",
+      "display_tw": "獵場",
+      "display_cn": "獵場",
+      "is_town": false
+    },
+    {
+      "index": 10,
+      "area_tw": "弗雷索恩",
+      "area_en": "Freythorn",
+      "display_tw": "弗雷索恩",
+      "display_cn": "弗雷索恩",
+      "is_town": false
+    },
+    {
+      "index": 11,
+      "area_tw": "奧格姆農地",
+      "area_en": "Ogham Farmlands",
+      "display_tw": "奧格姆農地",
+      "display_cn": "奧格姆農地",
+      "is_town": false
+    },
+    {
+      "index": 12,
+      "area_tw": "奧格姆村",
+      "area_en": "Ogham Village",
+      "display_tw": "奧格姆村",
+      "display_cn": "奧格姆村",
+      "is_town": false
+    },
+    {
+      "index": 13,
+      "area_tw": "宅第壁壘",
+      "area_en": "The Manor Ramparts",
+      "display_tw": "宅第壁壘",
+      "display_cn": "宅第壁壘",
+      "is_town": false
+    },
+    {
+      "index": 14,
+      "area_tw": "奧格姆宅第",
+      "area_en": "Ogham Manor",
+      "display_tw": "奧格姆宅第",
+      "display_cn": "奧格姆宅第",
+      "is_town": false
+    }
+  ],
+  "第二章": [
+    {
+      "index": 1,
+      "area_tw": "哈拉妮關口",
+      "area_en": "Halani Gates",
+      "display_tw": "哈拉妮關口",
+      "display_cn": "哈拉妮關口",
+      "is_town": false
+    },
+    {
+      "index": 2,
+      "area_tw": "莫頓挖石場",
+      "area_en": "Morden Quarry",
+      "display_tw": "莫頓挖石場",
+      "display_cn": "莫頓挖石場",
+      "is_town": false
+    },
+    {
+      "index": 3,
+      "area_tw": "莫頓礦坑",
+      "area_en": "Morden Mine",
+      "display_tw": "莫頓礦坑",
+      "display_cn": "莫頓礦坑",
+      "is_town": false
+    },
+    {
+      "index": 4,
+      "area_tw": "叛徒之路",
+      "area_en": "Traitor's Pass",
+      "display_tw": "叛徒之路",
+      "display_cn": "叛徒之路",
+      "is_town": false
+    },
+    {
+      "index": 5,
+      "area_tw": "乳齒象惡地",
+      "area_en": "Mammoth Badlands",
+      "display_tw": "乳齒象惡地",
+      "display_cn": "乳齒象惡地",
+      "is_town": false
+    },
+    {
+      "index": 6,
+      "area_tw": "骨坑",
+      "area_en": "The Bone Pits",
+      "display_tw": "骨坑",
+      "display_cn": "骨坑",
+      "is_town": false
+    },
+    {
+      "index": 7,
+      "area_tw": "凱斯城",
+      "area_en": "Qimah",
+      "display_tw": "凱斯城",
+      "display_cn": "凱斯城",
+      "is_town": false
+    },
+    {
+      "index": 8,
+      "area_tw": "失落之城",
+      "area_en": "The Lost City",
+      "display_tw": "失落之城",
+      "display_cn": "失落之城",
+      "is_town": false
+    },
+    {
+      "index": 9,
+      "area_tw": "掩埋神殿",
+      "area_en": "Buried Shrine",
+      "display_tw": "掩埋神殿",
+      "display_cn": "掩埋神殿",
+      "is_town": false
+    },
+    {
+      "index": 10,
+      "area_tw": "泰坦之谷",
+      "area_en": "Valley of the Titans",
+      "display_tw": "泰坦之谷",
+      "display_cn": "泰坦之谷",
+      "is_town": false
+    },
+    {
+      "index": 11,
+      "area_tw": "泰坦石窟",
+      "area_en": "Titan Grotto",
+      "display_tw": "泰坦石窟",
+      "display_cn": "泰坦石窟",
+      "is_town": false
+    },
+    {
+      "index": 12,
+      "area_tw": "戴斯哈",
+      "area_en": "Deshar",
+      "display_tw": "戴斯哈",
+      "display_cn": "戴斯哈",
+      "is_town": false
+    },
+    {
+      "index": 13,
+      "area_tw": "悼念之路",
+      "area_en": "Path of Mourning",
+      "display_tw": "悼念之路",
+      "display_cn": "悼念之路",
+      "is_town": false
+    },
+    {
+      "index": 14,
+      "area_tw": "戴斯哈尖塔",
+      "area_en": "Deshar Spire",
+      "display_tw": "戴斯哈尖塔",
+      "display_cn": "戴斯哈尖塔",
+      "is_town": false
+    },
+    {
+      "index": 15,
+      "area_tw": "無畏隊",
+      "area_en": "The Dreadnought",
+      "display_tw": "無畏隊",
+      "display_cn": "無畏隊",
+      "is_town": false
+    },
+    {
+      "index": 16,
+      "area_tw": "風沙沼澤",
+      "area_en": "Sandswept Marsh",
+      "display_tw": "風沙沼澤",
+      "display_cn": "風沙沼澤",
+      "is_town": false
+    }
+  ]
+}

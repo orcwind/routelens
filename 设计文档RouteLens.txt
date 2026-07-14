@@ -1,0 +1,715 @@
+# RouteLens 设计文档（V1.0）
+
+> **项目名称：** RouteLens
+> **定位：** Path of Exile 1 / Path of Exile 2 开荒计时与路线管理工具
+> **目标用户：** 普通玩家、开荒玩家、练习玩家（非 Speedrun 官方记录）
+
+---
+
+# 一、项目背景
+
+目前 PoE 玩家主要使用 LiveSplit 进行开荒计时。
+
+LiveSplit 非常优秀，但它的设计目标是 **一次完整连续的 Speedrun**。
+
+```
+Start
+↓
+
+连续游戏
+
+↓
+
+Finish
+```
+
+然而，大多数普通玩家并不是这样玩。
+
+例如：
+
+```
+总开荒时间：
+
+6~10 小时
+```
+
+很多玩家：
+
+```
+晚上玩 2 小时
+
+↓
+
+第二天继续
+
+↓
+
+再玩 3 小时
+
+↓
+
+周末完成
+```
+
+他们需要的是：
+
+> **练习自己的路线，而不是挑战官方 Speedrun。**
+
+目前 LiveSplit 不支持：
+
+* 保存当前 Run
+* 恢复 Run
+* 自动记录自己的路线
+* 根据游戏语言生成 Split
+
+因此设计 RouteLens。
+
+---
+
+# 二、设计目标
+
+RouteLens 的目标不是替代 LiveSplit。
+
+而是提供：
+
+> **Persistent Campaign Run（持久化开荒 Run）**
+
+让玩家能够：
+
+* 自动记录路线
+* 自动计时
+* 随时退出
+* 随时恢复
+* 长期分析自己的开荒效率
+
+---
+
+# 三、核心理念
+
+RouteLens 不是 Speedrun 工具。
+
+它是：
+
+> **Campaign Practice Tool**
+
+所有设计围绕：
+
+**练习**
+
+而不是：
+
+**比赛**
+
+---
+
+# 四、核心功能
+
+---
+
+## 功能一：Route Recorder
+
+首次运行：
+
+读取：
+
+```
+Client.txt
+```
+
+自动记录：
+
+```
+Clearfell
+
+↓
+
+Red Vale
+
+↓
+
+Ogham Village
+
+↓
+
+...
+```
+
+生成：
+
+```
+My Route
+```
+
+无需：
+
+* 下载 Split
+* 手工创建 Split
+* 修改语言
+
+路线完全来自玩家自己的游戏过程。
+
+---
+
+## 功能二：Auto Timer
+
+监听：
+
+```
+Client.txt
+```
+
+检测：
+
+```
+You have entered
+```
+
+自动：
+
+```
+Split
+```
+
+无需按键。
+
+---
+
+## 功能三：Persistent Run（核心功能）
+
+传统：
+
+```
+Start
+
+↓
+
+Finish
+```
+
+RouteLens：
+
+```
+Start
+
+↓
+
+Play
+
+↓
+
+Save
+
+↓
+
+Exit
+
+↓
+
+Tomorrow
+
+↓
+
+Resume
+
+↓
+
+Continue
+
+↓
+
+Finish
+```
+
+整个 Run 可以跨多天完成。
+
+---
+
+## 功能四：Run Snapshot
+
+自动保存：
+
+```
+当前地图
+
+当前 Split
+
+累计时间
+
+所有 Split 时间
+```
+
+例如：
+
+```
+run.json
+```
+
+```json
+{
+    "current_split": 42,
+    "current_zone": "The Dreadnought",
+    "total_time": 10234.3
+}
+```
+
+每次 Split 自动更新。
+
+无需手动保存。
+
+---
+
+## 功能五：Resume
+
+再次打开：
+
+```
+读取 Run
+
+↓
+
+恢复路线
+
+↓
+
+恢复时间
+
+↓
+
+继续计时
+```
+
+玩家无需重新开始。
+
+---
+
+## 功能六：Route Manager
+
+管理：
+
+```
+Lightning Arrow
+
+Spark
+
+Minion
+
+SSF
+
+Trade
+
+League Start
+```
+
+每套 BD 可以拥有自己的路线。
+
+---
+
+## 功能七：History
+
+保存所有 Run：
+
+```
+Run001
+
+Run002
+
+Run003
+```
+
+查看：
+
+* 总时间
+* 每章时间
+* 每地图时间
+
+---
+
+# 五、Route 系统
+
+Route 不是官方路线。
+
+而是：
+
+> 玩家自己的路线。
+
+例如：
+
+```
+Act1
+
+Clearfell
+
+Mud Burrow
+
+Red Vale
+
+Ogham Village
+```
+
+不同玩家：
+
+完全不同。
+
+RouteLens 不限制。
+
+---
+
+# 六、Run 系统
+
+Run 包含：
+
+```
+Route
+
++
+
+Timer
+
++
+
+Split History
+```
+
+例如：
+
+```
+Run
+
+├── Route
+
+├── Split List
+
+├── Total Time
+
+├── Current Split
+
+├── Last Zone
+
+├── Created Time
+
+└── Finished
+```
+
+---
+
+# 七、Session
+
+玩家一次打开游戏：
+
+```
+Session
+```
+
+例如：
+
+```
+Day1
+
+2小时
+```
+
+第二天：
+
+```
+Session2
+
+3小时
+```
+
+最后：
+
+```
+Run
+
+=
+
+Session1
+
++
+
+Session2
+
++
+
+Session3
+```
+
+---
+
+# 八、数据结构
+
+```
+Workspace
+
+│
+
+├── Routes
+
+│      Route1.json
+
+│      Route2.json
+
+│
+
+├── Runs
+
+│      Run001
+
+│          run.json
+
+│          splits.json
+
+│
+
+└── Settings
+```
+
+---
+
+# 九、路线生成
+
+第一次：
+
+```
+Client.txt
+
+↓
+
+识别：
+
+Entered Area
+
+↓
+
+生成：
+
+Route
+```
+
+以后：
+
+```
+Route
+
+↓
+
+Split
+```
+
+无需再次学习。
+
+---
+
+# 十、计时流程
+
+```
+Start Run
+
+↓
+
+等待进入地图
+
+↓
+
+发现新区
+
+↓
+
+Split
+
+↓
+
+保存
+
+↓
+
+等待下一地图
+```
+
+无需任何按键。
+
+---
+
+# 十一、保存机制
+
+每次：
+
+```
+Split
+```
+
+立即保存：
+
+```
+run.json
+```
+
+避免：
+
+* 崩溃
+* 停电
+* 强退
+
+最多损失当前地图。
+
+---
+
+# 十二、恢复机制
+
+打开：
+
+```
+Run
+
+↓
+
+恢复：
+
+Current Split
+
+↓
+
+恢复：
+
+Total Time
+
+↓
+
+继续
+```
+
+玩家感觉：
+
+```
+昨天玩到哪里
+
+今天继续哪里
+```
+
+---
+
+# 十三、统计功能
+
+每个地图：
+
+```
+Segment Time
+
+Average
+
+Best
+
+Worst
+```
+
+每章：
+
+```
+Act Time
+```
+
+整个：
+
+```
+Campaign Time
+```
+
+---
+
+# 十四、未来功能
+
+### Route Compare
+
+```
+Run A
+
+VS
+
+Run B
+```
+
+---
+
+### Heat Map
+
+哪些地图：
+
+耗时最长。
+
+---
+
+### Death Timeline
+
+记录：
+
+```
+死亡次数
+
+死亡位置
+```
+
+---
+
+### Quest Timeline
+
+记录：
+
+```
+什么时候完成任务。
+```
+
+---
+
+### XP Timeline
+
+记录：
+
+```
+升级速度。
+```
+
+---
+
+### League Comparison
+
+```
+3.26
+
+VS
+
+3.27
+```
+
+比较：
+
+路线变化。
+
+---
+
+# 十五、产品定位
+
+RouteLens 不是：
+
+> 一个新的 LiveSplit。
+
+也不是：
+
+> 一个官方 Speedrun 工具。
+
+RouteLens 的定位是：
+
+> **Persistent Campaign Timer**
+
+专门解决 PoE 玩家：
+
+> **一次开荒太长，无法连续完成。**
+
+同时提供：
+
+* 自动路线生成
+* 自动 Split
+* 自动保存
+* 自动恢复
+* 长期路线分析
+
+让玩家能够持续优化自己的开荒效率，而无需受 LiveSplit「一次 Run 必须连续完成」这一设计限制。
