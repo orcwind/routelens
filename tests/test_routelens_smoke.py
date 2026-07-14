@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import sys
 import unittest
@@ -32,7 +32,7 @@ class RouteLensSmokeTests(unittest.TestCase):
             self.assertIn(game, {"poe1", "poe2"})
 
     def test_hideout_filter(self) -> None:
-        from companion.hideout_filter import is_hideout_area
+        from routelens.hideout_filter import is_hideout_area
 
         self.assertTrue(is_hideout_area("Overgrown Hideout"))
         self.assertTrue(is_hideout_area("藏身处"))
@@ -191,7 +191,7 @@ class RouteLensSmokeTests(unittest.TestCase):
         assert run is not None
         self.assertEqual(run.current_index, 0)
         if len(route.nodes) > 1:
-            from companion.hideout_filter import is_hideout_area
+            from routelens.hideout_filter import is_hideout_area
 
             second_area = next(
                 (node.name for node in route.nodes[1:] if not is_hideout_area(node.name)),

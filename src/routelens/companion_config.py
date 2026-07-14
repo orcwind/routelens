@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from paths import APP_ROOT, project_path
+from .paths import APP_ROOT, project_path
 
 COMPANION_CONFIG_PATH = APP_ROOT / "config.json"
 
@@ -113,16 +113,16 @@ def default_companion_section() -> dict:
         "game": "poe2",
         "game_display_name": "Path of Exile 2",
         "client_txt_path": None,
-        "data_dir": "data/companion",
-        "area_names_file": "data/companion/area_names.json",
+        "data_dir": "data/routelens",
+        "area_names_file": "data/routelens/area_names.json",
         "auto_start_run": True,
         "locale": "zh_cn",
         "league": "",
         "town_area_keywords": ["Encampment", "Hideout", "Town"],
         "poll_interval_seconds": 0.2,
         "route_match_threshold": 0.95,
-        "livesplit_exe_path": "livesplitEN/LiveSplit.exe",
-        "export_lss_path": "data/companion/route.lss",
+        "livesplit_exe_path": None,
+        "export_lss_path": "data/routelens/route.lss",
         "close_livesplit_on_quit": None,
     }
 

@@ -18,15 +18,25 @@ dist/
 build/
 *.spec.bak
 
-# —— 轨镜运行时数据（不入库）——
-data/routelens/
+# 轨镜运行时数据（入库仅保留静态资源）
+data/routelens/routes/
+data/routelens/results/
+data/routelens/active_run.json
+data/routelens/active_run_before_reset.json
+data/routelens/assist.log
 config.json
 
-# —— 旧项目 / 无关产物（不入库）——
-# LiveSplit 整包（轨镜不依赖）
+# —— 本机残留的旧项目（不入库）——
 livesplitEN/
-
-# OCR 地图提醒 / Companion LiveSplit 桥接等旧项目
+LiveSplit/
+csv/
+data/companion/
+data/Client.txt
+data/blacklist.json
+data/map_records.json
+logs/
+src/companion/
+src/companion_app.py
 src/app.py
 src/alert.py
 src/blacklist.py
@@ -35,65 +45,29 @@ src/capture.py
 src/config.py
 src/map_list.py
 src/ocr_engine.py
+src/paths.py
 src/recognizer.py
 src/tracker.py
-src/companion_app.py
-src/companion/gui.py
-src/companion/setup_wizard.py
-src/companion/ls_*.py
-src/companion/livesplit_export.py
-src/companion/_pipe_worker.py
-src/companion/progress_dialog.py
-src/companion/quit_dialog.py
-src/companion/route_sidebar.py
-src/companion/run_manager.py
-src/companion/run_session.py
-src/companion/runtime.py
-src/companion/state_machine.py
-src/companion/statistics.py
-src/companion/user_routes.py
-src/companion/route.py
-src/companion/route_log.py
-src/companion/checkpoint.py
-src/companion/log_split_bridge.py
+scripts/
 companion.spec
 build_companion.bat
 config.companion.template.json
-
-# 旧文档 / 草稿
 livesplit*.md
 思路.txt
-
-# Companion 用户数据
-data/companion/Routes/
-data/companion/assist.log
-data/companion/current_route.json
-data/companion/checkpoint.json
-data/companion/statistics.json
-data/companion/*.lss
-data/companion/*_route.json
-data/companion/extracted_routes.json
-data/Client.txt
-data/blacklist.json
-data/map_records.json
-logs/
+raw_*.html
 *.db
 *.sqlite3
-raw_*.html
 
-# 旧项目脚本与测试（仅保留轨镜相关）
-scripts/
-tests/test_character_session_split.py
-tests/test_checkpoint_flow.py
-tests/test_client_txt_simulator.py
-tests/test_companion.py
-tests/test_companion_config.py
-tests/test_livesplit_export.py
-tests/test_log_split_bridge.py
-tests/test_ls_bridge.py
-tests/test_ls_checkpoint.py
-tests/test_progress_saves.py
-tests/test_reset_export.py
+# 旧项目测试残留
+tests/test_character_*.py
+tests/test_checkpoint_*.py
+tests/test_client_txt_*.py
+tests/test_companion*.py
+tests/test_livesplit_*.py
+tests/test_log_split_*.py
+tests/test_ls_*.py
+tests/test_progress_*.py
+tests/test_reset_*.py
 tests/test_route_store.py
 tests/test_run_session.py
-tests/test_save_restore_consistency.py
+tests/test_save_restore_*.py

@@ -21,7 +21,7 @@ POE2_PROFILE = GameProfile(
     chapter_names=POE2_ALL_CHAPTER_NAMES,
     town_keywords=UNIVERSAL_PROFILE.town_keywords,
     livesplit_game_name="Path of Exile 2",
-    area_names_file="data/companion/area_names.json",
-    export_lss_name="data/companion/route.lss",
+    area_names_file="data/routelens/area_names.json",
+    export_lss_name="data/routelens/route.lss",
     extra_patterns=UNIVERSAL_PROFILE.extra_patterns,
 )

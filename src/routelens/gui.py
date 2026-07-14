@@ -7,6 +7,7 @@ from tkinter import filedialog, messagebox, ttk
 import customtkinter as ctk
 import pystray
 
+from . import test_log
 from .config import (
     load_client_path_for_game,
     load_routelens_config,
@@ -48,7 +49,6 @@ from .split_panel import SplitPanel
 from .tray_icon import ensure_window_ico, load_tray_image, load_window_icon_image
 from .ui_i18n import UI_LANG_EN, UI_LANG_ZH, t
 from .version import APP_DISPLAY, APP_NAME
-from companion import test_log
 
 LIST_BG = SURFACE
 NODES_PER_PAGE = 50

@@ -49,7 +49,7 @@ def detect_game_from_client(path: Path, *, sample_chars: int = 80_000) -> str:
         return guess
 
     if POE2_MARKERS.search(sample) or "第二章" in sample or "第三章" in sample:
-        from companion.log_analyzer import discover_chapters_in_log
+        from .log_analyzer import discover_chapters_in_log
 
         if discover_chapters_in_log(path, "poe2"):
             return "poe2"

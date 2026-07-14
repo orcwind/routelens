@@ -4,7 +4,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
-from companion.companion_config import (
+from .companion_config import (
     COMPANION_CONFIG_PATH,
     CompanionConfig,
     default_companion_section,

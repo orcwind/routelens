@@ -6,12 +6,12 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 
-from companion.area_registry import AreaRegistry
-from companion.hideout_filter import is_hideout_area
-from companion.log_analyzer import analyze_client_log
-from companion.log_locale import detect_client_log_locale
-from companion.route_library import merge_session_dicts
-from companion import test_log
+from .area_registry import AreaRegistry
+from .hideout_filter import is_hideout_area
+from .log_analyzer import analyze_client_log
+from .log_locale import detect_client_log_locale
+from .route_library import merge_session_dicts
+from . import test_log
 
 from .campaign_end import truncate_at_campaign_end
 from .models import ReferenceRoute, RouteNode
@@ -32,7 +32,7 @@ LATE_CHAPTERS_POE1 = {"第五章", "第六章", "Act 5", "Act 6"}
 LATE_CHAPTERS_POE2 = {"第四章", "第五章", "Act 4", "Act 5"}
 
 _CAMPAIGN_SPLITS_PATH = (
-    Path(__file__).resolve().parents[2] / "data" / "companion" / "campaign_splits.json"
+    Path(__file__).resolve().parents[2] / "data" / "routelens" / "campaign_splits.json"
 )
 
 

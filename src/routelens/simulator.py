@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 
 import customtkinter as ctk
 
-from companion.client_txt_simulator import TOMB_BRANCH_OUT_OF_ORDER
-from companion import test_log
+from .client_txt_simulator import TOMB_BRANCH_OUT_OF_ORDER
+from . import test_log
 
 from .area_filter import filter_hideout_nodes
 from .theme import BG, BORDER, CORNER_RADIUS, FONT_UI_SM, SURFACE, TEXT_FG
@@ -137,7 +137,7 @@ class SimulatorPanel(ctk.CTkFrame):
             messagebox.showerror("模拟失败", "未找到 Client.txt", parent=self.app.root)
             return
         try:
-            from companion.client_txt_simulator import append_scene_sequence
+            from .client_txt_simulator import append_scene_sequence
 
             test_log.write("SIM", "陵墓乱序分支", areas=list(TOMB_BRANCH_OUT_OF_ORDER))
             append_scene_sequence(client_path, list(TOMB_BRANCH_OUT_OF_ORDER), step_seconds=0.8)

@@ -5,13 +5,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from companion.area_registry import AreaRegistry
-from companion.companion_config import CompanionConfig
-from companion.events import EventBus, EventType, GameEvent
-from companion.games.registry import get_game
-from companion.log_watcher import LogWatcher
-from companion import test_log
-from companion.hideout_filter import is_hideout_area
+from .area_registry import AreaRegistry
+from .companion_config import CompanionConfig
+from .events import EventBus, EventType, GameEvent
+from .games.registry import get_game
+from .log_watcher import LogWatcher
+from . import test_log
+from .hideout_filter import is_hideout_area
 
 from .area_filter import filter_hideout_nodes
 from .client_import import import_routes_from_client
@@ -223,7 +223,7 @@ class RunEngine:
             min_nodes=min_nodes,
         )
         route_count = self.store.replace_client_routes(routes, game_id=target_game)
-        from companion.log_locale import detect_client_log_locale
+        from .log_locale import detect_client_log_locale
 
         return {
             "session_count": session_count,
@@ -387,7 +387,7 @@ class RunEngine:
         self._emit_state()
 
     def simulate_area(self, area: str, *, write_client: bool = True) -> None:
-        """模拟进图：写入 Client.txt 并立即同步处理（与 companion 桥接一致）。"""
+        """模拟进图：写入 Client.txt 并立即同步处理。"""
         test_log.write(
             "SIM",
             "模拟进图",
@@ -400,7 +400,7 @@ class RunEngine:
             client_path = self.client_path
             if client_path is None or not client_path.is_file():
                 raise FileNotFoundError("未找到 Client.txt")
-            from companion.client_txt_simulator import append_scene_change
+            from .client_txt_simulator import append_scene_change
 
             append_scene_change(client_path, area)
         self._last_area = ""

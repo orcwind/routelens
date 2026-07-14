@@ -54,7 +54,7 @@ POE2_CAMPAIGN_END = _name_set(
     "高地神塔庇護所",
 )
 
-_WAYSTONE_CSV = Path(__file__).resolve().parents[2] / "csv" / "poe2" / "poe2_waystone_maps.csv"
+_WAYSTONE_CSV = Path(__file__).resolve().parents[2] / "data" / "routelens" / "poe2_waystone_maps.csv"
 
 
 @lru_cache(maxsize=1)

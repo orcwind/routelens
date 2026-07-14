@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from companion.hideout_filter import is_hideout_area
+from .hideout_filter import is_hideout_area
 
 __all__ = ["is_hideout_area", "filter_hideout_nodes"]
 
