@@ -45,7 +45,7 @@ UNIVERSAL_PROFILE = GameProfile(
         "Hub",
     ),
     livesplit_game_name="",
-    area_names_file="data/routelens/area_names.json",
+    area_names_file="",
     export_lss_name="data/routelens/route.lss",
     extra_patterns=(
         (EventType.AREA_ENTERED, re.compile(rf"{CLIENT_PREFIX} : You have entered (.+)\.")),

@@ -1,9 +1,7 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime
-from functools import lru_cache
 from pathlib import Path
 
 from .area_registry import AreaRegistry
@@ -31,61 +29,17 @@ MID_CHAPTERS_POE2 = {"第三章", "Act 3"}
 LATE_CHAPTERS_POE1 = {"第五章", "第六章", "Act 5", "Act 6"}
 LATE_CHAPTERS_POE2 = {"第四章", "第五章", "Act 4", "Act 5"}
 
-_CAMPAIGN_SPLITS_PATH = (
-    Path(__file__).resolve().parents[2] / "data" / "routelens" / "campaign_splits.json"
-)
 
-
-@lru_cache(maxsize=1)
 def _load_area_chapter_map() -> dict[str, str]:
-    if not _CAMPAIGN_SPLITS_PATH.is_file():
-        return {}
-    try:
-        raw = json.loads(_CAMPAIGN_SPLITS_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    mapping: dict[str, str] = {}
-    for chapter, zones in raw.items():
-        if chapter in UNKNOWN_CHAPTER_LABELS or not isinstance(zones, list):
-            continue
-        for zone in zones:
-            if not isinstance(zone, dict):
-                continue
-            for key in (
-                zone.get("area_en"),
-                zone.get("area_tw"),
-                zone.get("display_tw"),
-                zone.get("display_cn"),
-            ):
-                if key:
-                    mapping[str(key)] = chapter
-    return mapping
+    """章节信息只认 Client.txt；不再使用外部 campaign_splits 表。"""
+    return {}
 
 
 def _expand_area_chapter_map(
     base: dict[str, str],
     area_registry: AreaRegistry | None,
 ) -> dict[str, str]:
-    if area_registry is None:
-        return base
-    expanded = dict(base)
-    for canonical, entry in area_registry.all_areas().items():
-        chapter = (
-            expanded.get(canonical)
-            or expanded.get(str(entry.get("en") or ""))
-            or expanded.get(str(entry.get("zh_tw") or ""))
-            or expanded.get(str(entry.get("zh_cn") or ""))
-        )
-        if not chapter:
-            continue
-        names = {canonical, str(entry.get("en") or ""), str(entry.get("zh_tw") or ""), str(entry.get("zh_cn") or "")}
-        aliases = entry.get("aliases") or []
-        if isinstance(aliases, list):
-            names.update(str(item) for item in aliases if item)
-        for name in names:
-            if name:
-                expanded[name] = chapter
-    return expanded
+    return dict(base) if base else {}
 
 
 def _route_name(character: str, chapter_label: str, started_at: str | None = None) -> str:
@@ -328,13 +282,19 @@ def sessions_to_reference_routes(
     for session in qualified:
         character = session.get("character") or "未知角色"
         route_game = str(session.get("game_id") or game_id)
+        # Client.txt 原文优先，不用经过 locale 改写的 display
         nodes = [
             RouteNode(
-                name=str(split.get("area") or split.get("area_en") or ""),
+                name=str(
+                    split.get("area")
+                    or split.get("display")
+                    or split.get("area_en")
+                    or ""
+                ),
                 seconds=float(split.get("segment_seconds", 0)),
             )
             for split in _filtered_splits(session, route_game)
-            if split.get("area") or split.get("area_en")
+            if split.get("area") or split.get("display") or split.get("area_en")
         ]
         if len(nodes) < 2:
             continue

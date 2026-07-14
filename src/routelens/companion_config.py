@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .paths import APP_ROOT, project_path
+from .paths import APP_ROOT, project_path, resource_path
 
 COMPANION_CONFIG_PATH = APP_ROOT / "config.json"
 
@@ -85,7 +85,10 @@ class CompanionConfig:
 
     @property
     def resolved_area_names_path(self) -> Path:
-        return project_path(self.area_names_file)
+        # 兼容旧配置字段；AreaRegistry 已不再读取任何地名表
+        if self.area_names_file:
+            return resource_path(self.area_names_file)
+        return project_path("data/routelens")
 
 
 def discover_client_txt() -> Path | None:
@@ -114,9 +117,11 @@ def default_companion_section() -> dict:
         "game_display_name": "Path of Exile 2",
         "client_txt_path": None,
         "data_dir": "data/routelens",
-        "area_names_file": "data/routelens/area_names.json",
+        "area_names_file": "",
         "auto_start_run": True,
         "locale": "zh_cn",
+        "node_locale": "zh_cn",
+        "check_updates": True,
         "league": "",
         "town_area_keywords": ["Encampment", "Hideout", "Town"],
         "poll_interval_seconds": 0.2,
@@ -140,6 +145,9 @@ def load_companion_config(path: Path = COMPANION_CONFIG_PATH) -> CompanionConfig
     data = json.loads(path.read_text(encoding="utf-8"))
     companion = data.get("companion", {})
     defaults = default_companion_section()
+    node_locale = _normalize_node_locale(
+        companion.get("node_locale") or companion.get("locale") or defaults["node_locale"]
+    )
     return CompanionConfig(
         game=companion.get("game") or defaults["game"],
         game_display_name=companion.get("game_display_name", defaults["game_display_name"]),
@@ -147,7 +155,7 @@ def load_companion_config(path: Path = COMPANION_CONFIG_PATH) -> CompanionConfig
         data_dir=companion.get("data_dir", defaults["data_dir"]),
         area_names_file=companion.get("area_names_file", defaults["area_names_file"]),
         auto_start_run=bool(companion.get("auto_start_run", defaults["auto_start_run"])),
-        locale=companion.get("locale", defaults["locale"]),
+        locale=node_locale,
         league=companion.get("league", defaults["league"]),
         town_area_keywords=list(
             companion.get("town_area_keywords", defaults["town_area_keywords"])
@@ -164,11 +172,31 @@ def load_companion_config(path: Path = COMPANION_CONFIG_PATH) -> CompanionConfig
     )
 
 
+def _normalize_node_locale(value: object) -> str:
+    raw = str(value or "").strip().lower().replace("-", "_")
+    if raw in {"zh_tw", "zh_hk", "zh_hant", "tw", "hant"}:
+        return "zh_tw"
+    if raw in {"en", "en_us", "en_gb", "english"}:
+        return "en"
+    return "zh_cn"
+
+
 def _write_companion_field(key: str, value: str | None, path: Path = COMPANION_CONFIG_PATH) -> None:
     ensure_config_file(path)
     data = json.loads(path.read_text(encoding="utf-8"))
     companion = data.setdefault("companion", default_companion_section())
     companion[key] = value
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=4), encoding="utf-8")
+
+
+def save_node_locale(locale: str, path: Path = COMPANION_CONFIG_PATH) -> None:
+    """节点显示语言：zh_cn / zh_tw / en（同步写 locale，供 AreaRegistry 使用）。"""
+    normalized = _normalize_node_locale(locale)
+    ensure_config_file(path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    companion = data.setdefault("companion", default_companion_section())
+    companion["node_locale"] = normalized
+    companion["locale"] = normalized
     path.write_text(json.dumps(data, ensure_ascii=False, indent=4), encoding="utf-8")
 
 

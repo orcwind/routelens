@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import csv
 from functools import lru_cache
-from pathlib import Path
+
+from .paths import project_path
 
 
 def _norm(name: str) -> str:
@@ -54,7 +55,8 @@ POE2_CAMPAIGN_END = _name_set(
     "高地神塔庇護所",
 )
 
-_WAYSTONE_CSV = Path(__file__).resolve().parents[2] / "data" / "routelens" / "poe2_waystone_maps.csv"
+# 旧 OCR 项目路石表；仅开发态可选读取，不随 RouteLens 安装包分发
+_WAYSTONE_CSV = project_path("csv/poe2/poe2_waystone_maps.csv")
 
 
 @lru_cache(maxsize=1)
