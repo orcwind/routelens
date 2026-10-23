@@ -1,6 +1,6 @@
 """轨镜版本与关于信息。"""
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 APP_NAME = "轨镜"
 APP_NAME_EN = "RouteLens"
 APP_DISPLAY = f"{APP_NAME} {APP_NAME_EN}"
@@ -55,7 +55,6 @@ GitHub：{GITHUB_URL}
 
 贡献：
 欢迎在 GitHub 提 Issue / Pull Request。
-发布仓库地址确定后请将上方 GitHub 链接换成正式 URL。
 """
 
 ABOUT_TEXT_EN = f"""{APP_DISPLAY}  v{VERSION}
@@ -79,5 +78,4 @@ Disclaimer:
 
 Contributing:
 Issues and Pull Requests on GitHub are welcome.
-Replace the GitHub URL above once the public repo is ready.
 """

@@ -72,3 +72,20 @@ def save_ui_lang(lang: str) -> None:
     companion = data.setdefault("companion", default_companion_section())
     companion["ui_lang"] = "en" if str(lang).lower().startswith("en") else "zh"
     COMPANION_CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=4), encoding="utf-8")
+
+
+def load_check_updates() -> bool:
+    ensure_config_file(COMPANION_CONFIG_PATH)
+    data = json.loads(COMPANION_CONFIG_PATH.read_text(encoding="utf-8"))
+    companion = data.get("companion") or {}
+    if "check_updates" not in companion:
+        return True
+    return bool(companion.get("check_updates"))
+
+
+def save_check_updates(enabled: bool) -> None:
+    ensure_config_file(COMPANION_CONFIG_PATH)
+    data = json.loads(COMPANION_CONFIG_PATH.read_text(encoding="utf-8"))
+    companion = data.setdefault("companion", default_companion_section())
+    companion["check_updates"] = bool(enabled)
+    COMPANION_CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=4), encoding="utf-8")

@@ -5,9 +5,48 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .paths import APP_ROOT, project_path, resource_path
+from .paths import APP_ROOT, USER_DATA_ROOT, project_path, resource_path, user_data_path
 
-COMPANION_CONFIG_PATH = APP_ROOT / "config.json"
+COMPANION_CONFIG_PATH = USER_DATA_ROOT / "config.json"
+
+# 旧版把用户数据写在 exe 旁；首次启动迁移到 %APPDATA%\RouteLens
+LEGACY_CONFIG_PATH = APP_ROOT / "config.json"
+# 只迁移 RouteLens 自己的数据子目录，不整棵 data/ 搬（避免复制 Client.txt 等无关大文件）
+LEGACY_DATA_SUBDIR = "routelens"
+# 这些属于旧项目残留 / 与用户无关，不迁移
+LEGACY_SKIP_NAMES = frozenset({"companion", "Client.txt", "Client.txt.poe2assist.bak"})
+
+
+def migrate_legacy_userdata() -> None:
+    """老版本用户升级：把 exe 旁的 config.json / data\\routelens 一次性搬进用户目录。
+
+    只搬用户目录还没有的文件（新数据优先，绝不覆盖）；搬完保留原件不删（回退安全）。
+    """
+    try:
+        USER_DATA_ROOT.mkdir(parents=True, exist_ok=True)
+        if LEGACY_CONFIG_PATH.is_file():
+            target = USER_DATA_ROOT / "config.json"
+            if not target.exists():
+                target.write_bytes(LEGACY_CONFIG_PATH.read_bytes())
+        legacy_root = APP_ROOT / "data"
+        legacy_data = legacy_root / LEGACY_DATA_SUBDIR
+        if not legacy_data.is_dir():
+            return
+        target_data = USER_DATA_ROOT / "data" / LEGACY_DATA_SUBDIR
+        target_data.mkdir(parents=True, exist_ok=True)
+        for src in legacy_data.rglob("*"):
+            rel = src.relative_to(legacy_data)
+            if rel.parts and rel.parts[0] in LEGACY_SKIP_NAMES:
+                continue
+            dst = target_data / rel
+            if src.is_dir():
+                dst.mkdir(parents=True, exist_ok=True)
+            elif not dst.exists():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(src.read_bytes())
+    except OSError:
+        # 迁移失败不阻塞启动；老文件还在原地，下次启动再试
+        pass
 
 DEFAULT_CLIENT_PATHS = [
     APP_ROOT / "data" / "Client.txt",
@@ -62,7 +101,7 @@ class CompanionConfig:
 
     @property
     def resolved_export_lss_path(self) -> Path:
-        return project_path(self.export_lss_path).resolve()
+        return user_data_path(self.export_lss_path).resolve()
 
     @property
     def resolved_client_path(self) -> Path | None:
@@ -81,14 +120,14 @@ class CompanionConfig:
 
     @property
     def resolved_data_dir(self) -> Path:
-        return project_path(self.data_dir)
+        return user_data_path(self.data_dir)
 
     @property
     def resolved_area_names_path(self) -> Path:
         # 兼容旧配置字段；AreaRegistry 已不再读取任何地名表
         if self.area_names_file:
             return resource_path(self.area_names_file)
-        return project_path("data/routelens")
+        return user_data_path("data/routelens")
 
 
 def discover_client_txt() -> Path | None:

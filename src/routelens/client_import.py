@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import uuid
 from datetime import datetime
@@ -11,7 +11,7 @@ from .log_locale import detect_client_log_locale
 from .route_library import merge_session_dicts
 from . import test_log
 
-from .campaign_end import truncate_at_campaign_end
+from .campaign_end import log_has_campaign_end, truncate_at_campaign_end
 from .models import ReferenceRoute, RouteNode
 
 RECENT_ROUTE_LIMIT = 10
@@ -67,6 +67,11 @@ def _filtered_splits(session_dict: dict, game_id: str | None = None) -> list[dic
     if game_id:
         splits = truncate_at_campaign_end(splits, game_id)
     return splits
+
+
+def _raw_splits(session_dict: dict) -> list[dict]:
+    """未过滤/未截断的原始 splits，供锚点存在性检查。"""
+    return list(session_dict.get("splits") or [])
 
 
 def _sanitize_chapters(chapters: list[str] | None) -> list[str]:
@@ -138,7 +143,13 @@ def infer_route_game_id(
     area_registry: AreaRegistry | None,
     default_game_id: str,
 ) -> str:
-    """根据区域名判断路线属于 PoE1 还是 PoE2（混合 Client.txt 按路线拆分）。"""
+    """根据区域名判断路线属于 PoE1 还是 PoE2（混合 Client.txt 按路线拆分）。
+
+    无 PoE2 区域查找表时不可靠，一律沿用本次导入目标游戏，避免把 PoE2 误标成 PoE1。
+    """
+    default = str(default_game_id or "").strip().lower() or "poe2"
+    if not poe2_area_keys:
+        return default
     poe2_hits = 0
     poe1_hits = 0
     for split in _filtered_splits(session_dict):
@@ -153,7 +164,7 @@ def infer_route_game_id(
         return "poe2"
     if poe1_hits > 0:
         return "poe1"
-    return default_game_id
+    return default
 
 
 def _enrich_session_dict(
@@ -269,19 +280,30 @@ def sessions_to_reference_routes(
     game_id: str,
     max_routes: int = RECENT_ROUTE_LIMIT,
 ) -> list[ReferenceRoute]:
-    qualified = [
-        session
-        for session in session_dicts
-        if _session_is_complete_campaign(session, str(session.get("game_id") or game_id))
-    ]
+    # 未通关角色名单（日志窗口无开荒终点锚点）：照常导入现有节点，
+    # 名单仅供 UI 提醒「未通关，路线可能不完整」。
+    import_game = str(game_id or "").strip().lower() or "poe2"
+    unfinished_characters = sorted(
+        {
+            (session.get("character") or "未知角色").strip() or "未知角色"
+            for session in session_dicts
+            if str(session.get("game_id") or game_id) == import_game
+            and not log_has_campaign_end(_raw_splits(session), import_game)
+        },
+        key=str.casefold,
+    )
+    qualified = list(session_dicts)
     qualified.sort(key=lambda item: item.get("ended_at") or item.get("started_at") or "", reverse=True)
     if max_routes > 0:
         qualified = qualified[:max_routes]
 
+    # 设置页按游戏导入时传入的 game_id 为准，保证 PoE1/PoE2 路线互不覆盖
+    import_game = str(game_id or "").strip().lower() or "poe2"
+
     routes: list[ReferenceRoute] = []
     for session in qualified:
         character = session.get("character") or "未知角色"
-        route_game = str(session.get("game_id") or game_id)
+        route_game = import_game
         # Client.txt 原文优先，不用经过 locale 改写的 display
         nodes = [
             RouteNode(
@@ -317,7 +339,7 @@ def sessions_to_reference_routes(
                 game_id=route_game,
             )
         )
-    return routes
+    return routes, unfinished_characters
 
 
 def _log_session_summary(label: str, session_dict: dict, default_game_id: str) -> None:
@@ -441,9 +463,9 @@ def import_routes_from_client(
 
     if not sessions:
         test_log.write("IMPORT", "未找到有效日志片段", path=str(client_path))
-        return [], session_count, 0
+        return [], session_count, 0, []
 
-    routes = sessions_to_reference_routes(
+    routes, unfinished = sessions_to_reference_routes(
         merged_session_dicts, game_id=game_id, max_routes=max_routes
     )
     test_log.write(
@@ -453,5 +475,6 @@ def import_routes_from_client(
         merged_candidates=len(merged_session_dicts),
         imported_routes=len(routes),
         route_names=[route.name for route in routes],
+        unfinished_characters=unfinished,
     )
-    return routes, session_count, len(merged_session_dicts)
+    return routes, session_count, len(merged_session_dicts), unfinished

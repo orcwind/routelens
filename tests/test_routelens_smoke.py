@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import sys
 import unittest
@@ -67,7 +67,7 @@ class RouteLensSmokeTests(unittest.TestCase):
             client_path = Path(tmp) / "Client.txt"
             client_path.write_text(client_text, encoding="utf-8")
             engine = RunEngine(load_routelens_config())
-            routes, session_count, _merged = import_routes_from_client(
+            routes, session_count, _merged, _unqualified = import_routes_from_client(
                 client_path,
                 area_registry=engine.area_registry,
                 locale=engine.config.locale,
@@ -111,7 +111,8 @@ class RouteLensSmokeTests(unittest.TestCase):
                 "chapter_label": "第三章 → 第四章",
                 "started_at": "2026-01-02T10:00:00",
                 "ended_at": "2026-01-02T12:00:00",
-                "splits": _make_splits(20, 20),
+                "splits": _make_splits(20, 20)
+                + [{"area": "高地神塔庇護所", "area_en": "The Ziggurat Refuge", "segment_seconds": 10.0}],
                 "deaths": 1,
             },
         ]
@@ -134,7 +135,8 @@ class RouteLensSmokeTests(unittest.TestCase):
                     "segment_seconds": 10.0,
                 }
                 for index in range(52)
-            ],
+            ]
+            + [{"area": "高地神塔庇護所", "area_en": "The Ziggurat Refuge", "segment_seconds": 10.0}],
         }
         enriched = _enrich_session_dict(
             session,
@@ -145,6 +147,43 @@ class RouteLensSmokeTests(unittest.TestCase):
         )
         self.assertEqual(enriched.get("chapters"), [])
         self.assertTrue(_session_is_complete_campaign(enriched, "poe2"))
+
+    def test_unfinished_character_imported_and_reported(self) -> None:
+        """日志窗口无开荒终点锚点 = 未通关 → 照常导入现有节点，但进提醒名单。"""
+        from routelens.client_import import sessions_to_reference_routes
+
+        def _splits(count: int, with_end: bool) -> list[dict]:
+            result = [
+                {
+                    "area": f"区域{index}",
+                    "area_en": f"Zone{index}",
+                    "segment_seconds": 10.0,
+                }
+                for index in range(count)
+            ]
+            if with_end:
+                result.append({"area": "高地神塔庇護所", "area_en": "The Ziggurat Refuge", "segment_seconds": 10.0})
+            return result
+
+        finished = {
+            "character": "Finished",
+            "chapters": ["第一章", "第五章"],
+            "splits": _splits(40, with_end=True),
+        }
+        unfinished = {
+            "character": "OldChar",
+            "chapters": [],
+            "splits": _splits(60, with_end=False),
+        }
+
+        routes, unfinished_names = sessions_to_reference_routes(
+            [finished, unfinished], game_id="poe2", max_routes=10
+        )
+        # 未通关也导入；名单仅提醒
+        self.assertEqual(
+            sorted(r.character for r in routes), ["Finished", "OldChar"]
+        )
+        self.assertEqual(unfinished_names, ["OldChar"])
 
     def test_infer_route_game_id_poe1(self) -> None:
         from routelens.client_import import infer_route_game_id

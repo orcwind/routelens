@@ -43,8 +43,9 @@ def make_folder_name(
 def _split_to_user_format(split: dict) -> dict:
     seconds = float(split.get("segment_seconds", 0))
     cumulative = split.get("cumulative_seconds")
+    # 保留 Client.txt 里的原始区域名；不要用 display（会按配置语言改写成「清溪营」等错误简中）
     return {
-        "area": split.get("display") or split.get("area") or split.get("area_en", ""),
+        "area": split.get("area") or split.get("display") or split.get("area_en", ""),
         "area_en": split.get("area_en", ""),
         "elapsed": format_duration(seconds),
         "segment_seconds": seconds,

@@ -82,6 +82,7 @@ class LogRunSession:
         area_registry: AreaRegistry | None = None,
         chapters_filter: set[str] | None = None,
     ) -> list[SplitNode]:
+        """进入下一区时，把停留时长写到上一区（刚离开的节点），与实时计时一致。"""
         splits: list[SplitNode] = []
         seen: set[str] = set()
         last_time: datetime | None = None
@@ -92,20 +93,17 @@ class LogRunSession:
             if visit.area in seen:
                 continue
             seen.add(visit.area)
-            segment = 0.0 if last_time is None else max(0.0, (visit.timestamp - last_time).total_seconds())
-            if area_registry:
-                area_en = area_registry.english_name(visit.area)
-                display = area_registry.display_name(visit.area)
-            else:
-                area_en = visit.area
-                display = visit.area
+            if splits and last_time is not None:
+                splits[-1].segment_seconds = max(
+                    0.0, (visit.timestamp - last_time).total_seconds()
+                )
             splits.append(
                 SplitNode(
                     index=len(splits) + 1,
                     area=visit.area,
-                    area_en=area_en,
-                    display=display,
-                    segment_seconds=segment,
+                    area_en=visit.area,
+                    display=visit.area,
+                    segment_seconds=0.0,
                     arrived_at=visit.timestamp,
                 )
             )

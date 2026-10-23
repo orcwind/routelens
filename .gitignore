@@ -25,6 +25,7 @@ data/routelens/active_run.json
 data/routelens/active_run_before_reset.json
 data/routelens/assist.log
 config.json
+_update/
 
 # —— 本机残留的旧项目（不入库）——
 livesplitEN/
@@ -32,6 +33,7 @@ LiveSplit/
 csv/
 data/companion/
 data/Client.txt
+data/Client.txt.poe2assist.bak
 data/blacklist.json
 data/map_records.json
 logs/

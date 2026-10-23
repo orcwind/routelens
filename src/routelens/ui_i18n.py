@@ -12,6 +12,30 @@ STRINGS: dict[str, dict[str, str]] = {
         "settings": "设置",
         "intro": "介绍",
         "lang_btn": "EN",
+        "setup_title": "首次设置",
+        "setup_welcome": "欢迎使用 {app}",
+        "setup_hint": "请选择 PoE 或 PoE2 的 Client.txt。\n位置通常在：游戏目录\\logs\\Client.txt",
+        "setup_browse": "浏览选择 Client.txt",
+        "setup_found_title": "已选择游戏日志",
+        "setup_use": "使用这个",
+        "setup_reselect": "重新选择",
+        "setup_manual": "手动选择",
+        "setup_pick_title": "选择 Client.txt",
+        "setup_bad_path": "路径无效",
+        "setup_bad_path_detail": "找不到文件：\n{path}",
+        "setup_exit_title": "退出",
+        "setup_exit_confirm": "未完成设置将无法使用。\n确定退出？",
+        "update_title": "发现新版本",
+        "update_body": "当前版本：{current}\n最新版本：{latest}\n\n是否下载并安装更新？\n（保留你的路线、练习记录与设置；安装后自动重启）",
+        "update_downloading": "正在下载更新，请稍候…",
+        "update_ready": "下载完成，程序将重启以完成安装。",
+        "update_fail": "更新失败",
+        "update_fail_detail": "{exc}",
+        "update_latest": "已是最新版本（{version}）。",
+        "update_none": "暂时无法检查更新（网络或尚未发布 Release）。",
+        "update_dev_only": "开发模式不能自动覆盖安装。已打开 Releases 页面，请手动下载。",
+        "check_updates_btn": "检查更新",
+        "check_updates_toggle": "启动时检查更新",
         "new_run": "新建 Run",
         "continue": "继续",
         "select_route": "选择一条参考路线",
@@ -26,7 +50,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "open_log_folder": "打开 Log 目录",
         "save_close": "保存并关闭",
         "back_routes": "返回路线选择",
-        "press_0": "按 0 开始计时",
+        "back_short": "返回",
+        "press_0": "点击/按 0 开始计时",
         "favorite": "收藏",
         "unfavorite": "取消收藏",
         "rename": "重命名",
@@ -39,7 +64,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "col_ref": "参考",
         "col_delta": "差值",
         "col_total": "总时间",
-        "hotkeys": "0 切区 · 2 跳过 · 8 撤销 · 3 暂停 · 5 重置",
+        "hotkeys": "0 切区 · 2 跳过 · 8 撤销 · 3 暂停 · 5 重置 · 9 极简",
+        "hk_0": "0 切区",
+        "hk_2": "2 跳过",
+        "hk_8": "8 撤销",
+        "hk_3": "3 暂停",
+        "hk_5": "5 重置",
+        "hk_9": "9 极简",
+        "hk_click_through": "Shift+S 穿透",
+        "click_through_on": "已穿透",
+        "click_through_off": "穿透",
         "undo_reset": "撤销重置",
         "reset_confirm": "确定重置？进度与计时将归零。\n\n重置前会自动备份；误触后可点底部「撤销重置」找回。",
         "undo_reset_none": "没有可恢复的重置备份。",
@@ -70,6 +104,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "import_msg_recent": "从 Client.txt 末尾读取\n\n原始片段：{sessions} 次（每次 Client 启动算一段）\n按角色合并：{merged} 条候选\n导入完整开荒：{routes} 条",
         "import_msg_full": "发现 {sessions} 次开荒记录\n按角色合并：{merged} 条候选\n生成 {routes} 条参考路线",
         "import_msg_zero": "\n\n未导入路线。常见原因：\n· 日志被 Client 启动标记拆成很多短片段\n· 合并后仍不足 35 个节点或章节跨度不够\n请打开日志查看每条候选的 reject_reason。",
+        "import_msg_unfinished": "\n\n⚠ 以下角色未通关（日志中无开荒终点），已按现有节点导入，路线可能不完整：{names}\n建议通关后用新日志重新导入。",
         "import_msg_locale": "\n\n识别日志语言：{locale}",
         "import_msg_log": "\n\n详细日志：{path}",
         "open_fail_detail": "{exc}\n\n路径：{path}",
@@ -81,7 +116,7 @@ STRINGS: dict[str, dict[str, str]] = {
 
 一、工具特点
 1. 从游戏 Client.txt 读取你自己的开荒路线，真实可复现。
-2. 识别与显示语言跟随客户端（简体中文 / 繁体中文 / 英文）。
+2. 节点名直接使用 Client.txt 中的原文（简中 / 繁中 / 英文随游戏客户端）。
 3. 未完成进度可随时保存，下次一键继续。
 
 二、使用流程
@@ -96,7 +131,7 @@ STRINGS: dict[str, dict[str, str]] = {
 随时关闭会自动保存进度。
 下次选中同一路线，点「继续」即可接着上次的时间与节点继续。
 
-小键盘速查：0 切区 · 2 跳过 · 8 撤销 · 3 暂停 · 5 重置
+小键盘速查：0 切区 · 2 跳过 · 8 撤销 · 3 暂停 · 5 重置 · 9 极简
 """,
     },
     UI_LANG_EN: {
@@ -105,6 +140,30 @@ STRINGS: dict[str, dict[str, str]] = {
         "settings": "Settings",
         "intro": "Intro",
         "lang_btn": "中文",
+        "setup_title": "First-time Setup",
+        "setup_welcome": "Welcome to {app}",
+        "setup_hint": "Select Client.txt for Path of Exile or Path of Exile 2.\nUsually at: GameFolder\\logs\\Client.txt",
+        "setup_browse": "Browse for Client.txt",
+        "setup_found_title": "Game log selected",
+        "setup_use": "Use this",
+        "setup_reselect": "Choose again",
+        "setup_manual": "Manual select",
+        "setup_pick_title": "Select Client.txt",
+        "setup_bad_path": "Invalid path",
+        "setup_bad_path_detail": "File not found:\n{path}",
+        "setup_exit_title": "Quit",
+        "setup_exit_confirm": "Setup is incomplete and the app cannot run.\nQuit anyway?",
+        "update_title": "Update available",
+        "update_body": "Current: {current}\nLatest: {latest}\n\nDownload and install now?\n(Your routes, run records, and settings are kept; the app will restart)",
+        "update_downloading": "Downloading update, please wait…",
+        "update_ready": "Download complete. The app will restart to finish installing.",
+        "update_fail": "Update failed",
+        "update_fail_detail": "{exc}",
+        "update_latest": "You are on the latest version ({version}).",
+        "update_none": "Could not check for updates (network issue or no Release yet).",
+        "update_dev_only": "Dev builds cannot auto-install. Opened the Releases page for a manual download.",
+        "check_updates_btn": "Check for updates",
+        "check_updates_toggle": "Check for updates on startup",
         "new_run": "New Run",
         "continue": "Continue",
         "select_route": "Select a reference route",
@@ -119,7 +178,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "open_log_folder": "Open Log Folder",
         "save_close": "Save & Close",
         "back_routes": "Back to Routes",
-        "press_0": "Press 0 to start",
+        "back_short": "Back",
+        "press_0": "Click / Press 0 to start",
         "favorite": "Favorite",
         "unfavorite": "Unfavorite",
         "rename": "Rename",
@@ -132,7 +192,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "col_ref": "Ref",
         "col_delta": "Diff",
         "col_total": "Total",
-        "hotkeys": "0 Split · 2 Skip · 8 Undo · 3 Pause · 5 Reset",
+        "hotkeys": "0 Split · 2 Skip · 8 Undo · 3 Pause · 5 Reset · 9 Minimal",
+        "hk_0": "0 Split",
+        "hk_2": "2 Skip",
+        "hk_8": "8 Undo",
+        "hk_3": "3 Pause",
+        "hk_5": "5 Reset",
+        "hk_9": "9 Minimal",
+        "hk_click_through": "Shift+S Click-Through",
+        "click_through_on": "Click-Through On",
+        "click_through_off": "Click-Through",
         "undo_reset": "Undo Reset",
         "reset_confirm": "Reset timer and progress to zero?\n\nA backup is saved first; use “Undo Reset” at the bottom if this was a mistake.",
         "undo_reset_none": "No reset backup to restore.",
@@ -163,6 +232,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "import_msg_recent": "Read from the end of Client.txt\n\nRaw sessions: {sessions} (each Client launch is one segment)\nMerged by character: {merged} candidates\nImported full campaigns: {routes}",
         "import_msg_full": "Found {sessions} campaign session(s)\nMerged by character: {merged} candidates\nCreated {routes} reference route(s)",
         "import_msg_zero": "\n\nNo routes imported. Common reasons:\n· Log was split into many short fragments by Client launches\n· After merge still under 35 nodes or chapter span is too small\nCheck assist.log for each candidate’s reject_reason.",
+        "import_msg_unfinished": "\n\n⚠ These characters have not finished the campaign (no campaign end in log); imported as-is and may be incomplete: {names}\nRe-import with a newer log after finishing the campaign.",
         "import_msg_locale": "\n\nDetected log locale: {locale}",
         "import_msg_log": "\n\nDetailed log: {path}",
         "open_fail_detail": "{exc}\n\nPath: {path}",
@@ -174,7 +244,7 @@ Supports Path of Exile and Path of Exile 2.
 
 1. Features
 1. Import your own campaign routes from Client.txt — real runs you can retime.
-2. Detection follows the client language (Simplified Chinese / Traditional Chinese / English).
+2. Node names come from Client.txt as-is (Simplified / Traditional Chinese / English follows your game client).
 3. Save unfinished progress anytime and continue later in one click.
 
 2. How to use
@@ -189,7 +259,7 @@ Daily timing:
 Closing the app auto-saves progress.
 Next time, select the same route and click Continue to resume time and node index.
 
-Hotkeys: 0 split · 2 skip · 8 undo · 3 pause · 5 reset
+Hotkeys: 0 split · 2 skip · 8 undo · 3 pause · 5 reset · 9 minimal
 """,
     },
 }

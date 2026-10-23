@@ -1,11 +1,6 @@
-"""开荒结束判定：进入终局城镇后截断，避免异界地图进入参考路线。"""
+"""开荒结束判定：进入终局城镇后截断。"""
 
 from __future__ import annotations
-
-import csv
-from functools import lru_cache
-
-from .paths import project_path
 
 
 def _norm(name: str) -> str:
@@ -55,28 +50,6 @@ POE2_CAMPAIGN_END = _name_set(
     "高地神塔庇護所",
 )
 
-# 旧 OCR 项目路石表；仅开发态可选读取，不随 RouteLens 安装包分发
-_WAYSTONE_CSV = project_path("csv/poe2/poe2_waystone_maps.csv")
-
-
-@lru_cache(maxsize=1)
-def _poe2_waystone_area_names() -> frozenset[str]:
-    if not _WAYSTONE_CSV.is_file():
-        return frozenset()
-    names: set[str] = set()
-    try:
-        with _WAYSTONE_CSV.open(encoding="utf-8-sig", newline="") as handle:
-            reader = csv.DictReader(handle)
-            for row in reader:
-                for key in ("name_en", "name_cn", "name_tw"):
-                    raw = str(row.get(key) or "").strip()
-                    if raw:
-                        names.add(_norm(raw))
-    except OSError:
-        return frozenset()
-    # CSV 误含终局城镇，开荒截断时不当异界地图
-    return frozenset(names) - POE2_CAMPAIGN_END
-
 
 def _split_area_names(split: dict) -> list[str]:
     names: list[str] = []
@@ -95,15 +68,19 @@ def is_poe2_campaign_end(area: str) -> bool:
     return _norm(area) in POE2_CAMPAIGN_END
 
 
-def is_poe2_waystone_map(area: str) -> bool:
-    return _norm(area) in _poe2_waystone_area_names()
+def log_has_campaign_end(splits: list[dict], game_id: str) -> bool:
+    """日志窗口里是否出现过开荒终点锚点。
+
+    没出现 = 该角色在日志窗口内未通关（旧账号/中途弃坑），
+    导入时应拒绝并提醒换已通关账号的日志。
+    """
+    game = str(game_id or "").strip().lower()
+    is_end = is_poe1_campaign_end if game == "poe1" else is_poe2_campaign_end
+    return any(is_end(name) for split in splits for name in _split_area_names(split))
 
 
 def truncate_at_campaign_end(splits: list[dict], game_id: str) -> list[dict]:
-    """保留至第一个开荒终局城镇（含），之后全部丢弃。
-
-    PoE2 额外：一旦出现异界地图名（Waystone 列表），立即停止且不纳入该地图。
-    """
+    """保留至第一个开荒终局城镇（含），之后全部丢弃。"""
     if not splits:
         return []
 
@@ -126,13 +103,9 @@ def truncate_at_campaign_end(splits: list[dict], game_id: str) -> list[dict]:
             continue
 
         if game == "poe2":
-            # 终局城镇优先：纳入后截断（即使 CSV 误标为地图）
-            if any(is_poe2_campaign_end(name) for name in names):
-                result.append(split)
-                break
-            if any(is_poe2_waystone_map(name) for name in names):
-                break
             result.append(split)
+            if any(is_poe2_campaign_end(name) for name in names):
+                break
             continue
 
         result.append(split)

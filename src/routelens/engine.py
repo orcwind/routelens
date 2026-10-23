@@ -215,7 +215,7 @@ class RunEngine:
         self.config = load_routelens_config()
         self.reload_game_profile()
 
-        routes, session_count, merged_count = import_routes_from_client(
+        routes, session_count, merged_count, unfinished = import_routes_from_client(
             target_path,
             area_registry=self.area_registry,
             locale=self.config.locale,
@@ -229,6 +229,7 @@ class RunEngine:
             "session_count": session_count,
             "merged_candidates": merged_count,
             "route_count": route_count,
+            "unfinished_characters": unfinished,
             "recent_only": True,
             "detected_locale": detect_client_log_locale(target_path),
             "game_id": target_game,
@@ -435,13 +436,37 @@ class RunEngine:
             return None
         return route.nodes[index].seconds
 
+    def comparison_delta_seconds(self) -> float | None:
+        """相对参考的累计超前/落后（LiveSplit Ahead/Behind）。
+
+        当前总用时 − 参考路线前缀累计（含当前节点参考段）。
+        负值=领先，正值=落后。无参考或尚未开始计时时返回 None。
+        """
+        if not self.active_run or not self.active_run.reference_route_id:
+            return None
+        if self._timer_started_at is None and self.active_run.elapsed_seconds <= 0:
+            return None
+        route = self.get_reference_route()
+        if route is None or not route.nodes:
+            return None
+        index = max(0, min(self.active_run.current_index, len(route.nodes) - 1))
+        ref_sum = 0.0
+        found = False
+        for node in route.nodes[: index + 1]:
+            if node.seconds is None:
+                continue
+            ref_sum += float(node.seconds)
+            found = True
+        if not found:
+            return None
+        return self.elapsed_seconds() - ref_sum
+
     def current_segment_seconds(self) -> float:
         return self._segment_seconds(datetime.now())
 
     def display_name(self, area: str) -> str:
-        if not area:
-            return ""
-        return self.area_registry.display_name(area)
+        """节点名即 Client.txt 原文，不做词典翻译。"""
+        return area or ""
 
     def areas_match(self, area: str, expected: str) -> bool:
         return self._areas_match(area, expected)

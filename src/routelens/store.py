@@ -86,6 +86,8 @@ class RouteLensStore:
         return route
 
     def replace_client_routes(self, routes: list[ReferenceRoute], *, game_id: str | None = None) -> int:
+        """仅替换指定游戏的 Client.txt 导入路线；另一游戏与手动路线一律保留。"""
+        target_game = str(game_id or "").strip().lower() or None
         for path in list(self.routes_dir.glob("*.json")):
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -93,11 +95,16 @@ class RouteLensStore:
                 continue
             if data.get("source") != "client_txt":
                 continue
-            existing_game = str(data.get("game_id") or "")
-            if game_id is not None and existing_game != game_id:
+            existing_game = str(data.get("game_id") or "").strip().lower()
+            # 必须带 game_id 才替换；未知归属的旧路线不删，避免误清另一游戏
+            if target_game is None:
+                continue
+            if existing_game != target_game:
                 continue
             path.unlink(missing_ok=True)
         for route in routes:
+            if target_game and not str(route.game_id or "").strip():
+                route.game_id = target_game
             self.save_route(route)
         return len(routes)
 

@@ -32,7 +32,9 @@ class SplitPanel(tk.Canvas):
         self._row_height = 20
         self._auto_scroll = False
         self._minimal = False
+        self._minimal_rows = 1  # 极简：1=仅当前；3=前一个+当前+后一个
         self._total_text = ""
+        self._total_delta_text = ""
         self._headers = {
             "node": "节点",
             "time": "用时",
@@ -42,12 +44,22 @@ class SplitPanel(tk.Canvas):
         }
         self._menu_exit_minimal = "退出极简模式"
         self._menu_close = "关闭"
+        self._ct_on = False
+        self._ct_header_text = "⚡ Shift+S 恢复点击"
         self._on_exit_minimal: Callable[[], None] | None = None
         self._on_close_app: Callable[[], None] | None = None
         self.bind("<Configure>", self._on_configure)
         self.bind("<MouseWheel>", self._on_mousewheel)
+        self.bind("<Enter>", self._bind_wheel)
+        self.bind("<Leave>", self._unbind_wheel)
         self.bind("<Double-Button-1>", self._on_double_click)
         self.bind("<Button-3>", self._on_right_click)
+
+    def _bind_wheel(self, _event: object = None) -> None:
+        self.bind_all("<MouseWheel>", self._on_mousewheel)
+
+    def _unbind_wheel(self, _event: object = None) -> None:
+        self.unbind_all("<MouseWheel>")
 
     def set_exit_minimal_callback(self, callback: Callable[[], None] | None) -> None:
         self._on_exit_minimal = callback
@@ -71,6 +83,13 @@ class SplitPanel(tk.Canvas):
             self._menu_close = close_app
         self._redraw(preserve_scroll=True)
 
+    def set_click_through_hint(self, text: str, *, enabled: bool) -> None:
+        """穿透状态：开启时表头节点位显示恢复提示（不占额外高度）。"""
+        if self._ct_on == enabled:
+            return
+        self._ct_on = enabled
+        self._redraw(preserve_scroll=True)
+
     @property
     def minimal(self) -> bool:
         return self._minimal
@@ -79,7 +98,32 @@ class SplitPanel(tk.Canvas):
         if self._minimal == enabled:
             return
         self._minimal = enabled
+        if enabled:
+            self._minimal_rows = 1
         self._redraw()
+
+    def set_minimal_rows(self, count: int) -> None:
+        """极简上下文行数：1 或 3。"""
+        rows = 3 if count >= 2 else 1
+        if self._minimal_rows == rows:
+            return
+        self._minimal_rows = rows
+        if self._minimal:
+            self._redraw(preserve_scroll=True)
+
+    def content_height_for_minimal(self, row_count: int, width: int | None = None) -> int:
+        """估算极简模式内容高度（表头 + 行），供窗口贴边/吸附。"""
+        w = max(1, width or self.winfo_width() or self.BASE_WIDTH)
+        self._update_scale(w)
+        header_h = self._header_height()
+        n = 3 if row_count >= 2 else 1
+        # 当前行 bump 略高
+        body = 0
+        if n == 1:
+            body = self._row_height + 4
+        else:
+            body = (self._row_height) + (self._row_height + 4) + self._row_height
+        return header_h + body + 4
 
     def set_rows(
         self,
@@ -88,12 +132,106 @@ class SplitPanel(tk.Canvas):
         *,
         auto_scroll: bool = False,
         total_text: str = "",
+        total_delta_text: str = "",
+        redraw: bool = True,
     ) -> None:
         self._rows = rows
         self._current_index = current_index
         self._auto_scroll = auto_scroll
         self._total_text = total_text
-        self._redraw()
+        self._total_delta_text = total_delta_text
+        if redraw:
+            self._redraw()
+
+    def redraw(self, *, preserve_scroll: bool = False) -> None:
+        self._redraw(preserve_scroll=preserve_scroll)
+
+    def _visible_minimal_indices(self) -> tuple[list[int], int]:
+        """极简可见行索引与当前行索引。"""
+        ci = self._current_index
+        if not self._rows:
+            return [], -1
+        if ci < 0 or ci >= len(self._rows):
+            for i, row in enumerate(self._rows):
+                if row.get("status") == "current":
+                    ci = i
+                    break
+            else:
+                ci = len(self._rows) - 1
+        indices: list[int] = []
+        if ci >= 0:
+            if self._minimal_rows >= 3 and ci > 0:
+                indices.append(ci - 1)
+            indices.append(ci)
+            if self._minimal_rows >= 3 and ci + 1 < len(self._rows):
+                indices.append(ci + 1)
+        return indices, ci
+
+    def preferred_width_for_minimal(
+        self,
+        *,
+        min_width: int = 280,
+        max_width: int = 1920,
+    ) -> int:
+        """计算极简模式下完整显示可见节点名所需宽度（随字号迭代）。"""
+        if not self._minimal:
+            return min_width
+        width = max(min_width, int(self.winfo_width() or self.BASE_WIDTH))
+        ceiling = max(min_width, max_width)
+        for _ in range(16):
+            self._update_scale(width)
+            needed = self._minimal_content_min_width()
+            needed = max(min_width, min(ceiling, needed))
+            if needed <= width + 1:
+                return needed
+            width = needed
+        return width
+
+    def _minimal_content_min_width(self) -> int:
+        pad = 6
+        gap = max(6, int(8 * self._scale))
+        bump = 2
+        indices, ci = self._visible_minimal_indices()
+        visible = [self._rows[i] for i in indices if 0 <= i < len(self._rows)]
+
+        max_name = self._text_width(self._headers.get("node", "节点"), self._header_font())
+        for idx in indices:
+            if idx < 0 or idx >= len(self._rows):
+                continue
+            name = str(self._rows[idx].get("name", ""))
+            font = self._name_font(bump=bump if idx == ci else 0)
+            max_name = max(max_name, self._text_width(name, font))
+
+        times = [str(r.get("time", "")) for r in visible]
+        refs = [str(r.get("ref", "")) for r in visible]
+        deltas = [str(r.get("delta", "")) for r in visible]
+        if self._total_delta_text:
+            deltas.append(self._total_delta_text)
+        time_w = self._max_cell_width("time", times, bump=bump)
+        ref_w = self._max_cell_width("ref", refs, bump=bump)
+        delta_w = self._max_cell_width("delta", deltas, bump=bump)
+        totals = [self._total_text] if self._total_text else []
+        total_w = self._max_cell_width("total", totals, bump=bump)
+        delta_total_w = 0
+        if self._total_delta_text:
+            delta_total_w = self._text_width(self._total_delta_text, self._font(10, bump=bump)) + gap
+
+        # pad + 完整节点名 + 各数值列（含累计差与总时间）
+        return (
+            pad
+            + max_name
+            + 8
+            + gap
+            + time_w
+            + gap
+            + ref_w
+            + gap
+            + delta_w
+            + gap
+            + delta_total_w
+            + total_w
+            + pad
+        )
 
     def _on_double_click(self, _event: tk.Event) -> None:
         if self._minimal and self._on_exit_minimal is not None:
@@ -123,8 +261,16 @@ class SplitPanel(tk.Canvas):
         self._draw_frozen_header()
 
     def _update_scale(self, width: int) -> None:
-        """按窗口宽度缩放，并进一步缩小直到数值列不被裁切。"""
+        """按窗口宽度缩放。
+
+        极简模式：只按宽度比例缩放，不够宽由外层自动扩窗，禁止缩小字号挤节点名。
+        普通模式：必要时微缩字号，避免数值列被裁切。
+        """
         scale = max(0.55, min(1.35, width / self.BASE_WIDTH))
+        if self._minimal:
+            self._scale = scale
+            self._row_height = max(14, int(20 * scale))
+            return
         # 预留当前行 bump=2 的最宽数值，找不到合适字号则继续缩小
         for _ in range(12):
             self._scale = scale
@@ -202,8 +348,11 @@ class SplitPanel(tk.Canvas):
         if self._minimal:
             totals = [self._total_text] if self._total_text else []
             total_w = self._max_cell_width("total", totals, bump=bump)
+            delta_total_w = 0
+            if self._total_delta_text:
+                delta_total_w = self._text_width(self._total_delta_text, self._font(10, bump=bump)) + gap
             total_r = right
-            delta_r = total_r - total_w - gap
+            delta_r = total_r - total_w - delta_total_w - gap
             ref_r = delta_r - delta_w - gap
             time_r = ref_r - ref_w - gap
             name_w = max(24, time_r - time_w - gap - pad)
@@ -235,7 +384,12 @@ class SplitPanel(tk.Canvas):
         delta_text = str(row.get("delta", ""))
         name_font = self._name_font(bump=bump)
         cell_font = self._font(10, bump=bump)
-        name = self._truncate(str(row.get("name", "")), name_w - 4, font=name_font)
+        raw_name = str(row.get("name", ""))
+        # 极简模式禁止省略号截断；由窗口自动扩宽保证完整显示
+        if self._minimal:
+            name = raw_name
+        else:
+            name = self._truncate(raw_name, name_w - 4, font=name_font)
         row_h = self._row_height + (4 if bump else 0)
 
         if status == "current":
@@ -273,13 +427,28 @@ class SplitPanel(tk.Canvas):
                 delta_r, y, anchor="ne", text=delta_text, fill=d_color, font=cell_font, tags=("body",)
             )
         if show_total and total_r is not None and self._total_text:
+            total_font = cell_font
+            if self._total_delta_text:
+                delta = self._total_delta_text
+                d_color = GREEN if delta.startswith("-") else RED if delta.startswith("+") else WHITE
+                total_w = tkfont.Font(font=total_font).measure(self._total_text)
+                gap = max(6, int(8 * self._scale))
+                self.create_text(
+                    total_r - total_w - gap,
+                    y,
+                    anchor="ne",
+                    text=delta,
+                    fill=d_color,
+                    font=total_font,
+                    tags=("body",),
+                )
             self.create_text(
                 total_r,
                 y,
                 anchor="ne",
                 text=self._total_text,
                 fill=WHITE,
-                font=cell_font,
+                font=total_font,
                 tags=("body",),
             )
         return row_h
@@ -299,12 +468,18 @@ class SplitPanel(tk.Canvas):
         self.create_line(
             0, y0 + header_h - 1, width, y0 + header_h - 1, fill=HEADER_LINE, tags=("header",)
         )
+        # 穿透开启：表头节点位显示金色恢复提示（零高度占用）
+        node_header = self._headers.get("node", "节点")
+        node_color: str = HEADER_FG
+        if self._ct_on:
+            node_header = self._ct_header_text
+            node_color = GOLD
         self.create_text(
             8,
             y0 + pad,
             anchor="nw",
-            text=self._headers.get("node", "节点"),
-            fill=HEADER_FG,
+            text=node_header,
+            fill=node_color,
             font=header_font,
             tags=("header",),
         )
@@ -359,14 +534,10 @@ class SplitPanel(tk.Canvas):
 
         y = header_h
         if self._minimal:
-            current = None
-            if 0 <= self._current_index < len(self._rows):
-                current = self._rows[self._current_index]
-            elif self._rows:
-                current = next(
-                    (r for r in self._rows if r.get("status") == "current"), self._rows[-1]
-                )
-            if current is not None:
+            indices, ci = self._visible_minimal_indices()
+            for idx in indices:
+                row = self._rows[idx]
+                is_current = idx == ci
                 y += self._draw_row(
                     y=y,
                     width=width,
@@ -375,11 +546,12 @@ class SplitPanel(tk.Canvas):
                     ref_r=ref_r,
                     delta_r=delta_r,
                     total_r=total_r,
-                    row=current,
-                    bump=2,
-                    show_total=True,
+                    row=row,
+                    bump=2 if is_current else 0,
+                    show_total=is_current,
                 )
-            total_h = max(height, y + 8)
+            # 极简：scrollregion 贴内容，不撑满黑底空洞
+            total_h = max(y + 2, header_h + self._row_height)
             self.configure(scrollregion=(0, 0, width, total_h))
             self.yview_moveto(0)
             self._draw_frozen_header()
