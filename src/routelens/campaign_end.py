@@ -94,7 +94,9 @@ def truncate_at_campaign_end(splits: list[dict], game_id: str) -> list[dict]:
             if any(_norm(name) in POE1_FINAL_BOSS_AREA for name in names):
                 seen_final_boss = True
             result.append(split)
-            if any(is_poe1_campaign_end(name) for name in names):
+            # Karui Shores 在 Act 5→6 过渡时也会出现（之后是 Act 6 Lioneye's Watch），
+            # 只有「打完 Act 10 奇塔弗（饲槽）之后」的那次才是开荒终点。
+            if seen_final_boss and any(is_poe1_campaign_end(name) for name in names):
                 break
             if seen_final_boss and any(
                 _norm(name) in POE1_LEGACY_TOWN_AFTER_BOSS for name in names

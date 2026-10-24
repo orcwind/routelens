@@ -54,8 +54,22 @@ def _split_to_user_format(split: dict) -> dict:
     }
 
 
-def _split_key(split: dict) -> str:
+def _split_area(split: dict) -> str:
     return split.get("area_en") or split.get("area") or ""
+
+
+def _split_key(split: dict) -> str:
+    """一次「到访」的身份。
+
+    PoE1 的 Act 6–10 会重复使用 Act 1–5 的区域名（Lioneye's Watch / The Coast…），
+    所以**不能**只用区域名去重，否则后半程会被整段删掉。
+    有到达时间戳时用它做唯一身份（同一次到访才合并、重复导入仍幂等）。
+    """
+    arrived = str(split.get("arrived_at") or "").strip()
+    area = _split_area(split)
+    if arrived:
+        return f"{area}@{arrived}"
+    return area
 
 
 def _chapter_label_from_list(chapters: list[str]) -> str:
@@ -90,6 +104,10 @@ def _merge_splits(existing: list[dict], new: list[dict]) -> list[dict]:
         split = _split_to_user_format(item) if "elapsed" not in item else dict(item)
         key = _split_key(split)
         if not key or key in seen:
+            continue
+        # 连续两次进入同一区域（复活回城 / 重复读写）算噪声，只保留第一次。
+        # 非相邻的重复区域名必须保留：那是后半程（Act 6–10）复用同名区域。
+        if merged and _split_area(merged[-1]) == _split_area(split):
             continue
         seen.add(key)
         merged.append(split)
