@@ -15,6 +15,7 @@ Thumbs.db
 
 # 打包产物
 dist/
+dist_new/
 build/
 *.spec.bak
 
