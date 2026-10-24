@@ -99,7 +99,7 @@ _NUMPAD_KEYCODE_TO_DIGIT: dict[int, str] = {
 
 
 class RouteLensApp:
-    def __init__(self) -> None:
+    def __init__(self, root: tk.Misc | None = None) -> None:
         apply_theme()
         migrate_legacy_userdata()
         self.config = load_routelens_config()
@@ -107,7 +107,9 @@ class RouteLensApp:
         self.engine = RunEngine(self.config)
         self.engine.set_state_callback(self._on_run_state)
 
-        self.root = ctk.CTk()
+        # root 可注入：同一进程反复建/销 Tk 根会偶发毁掉共享的 Tcl 解释器
+        # （tcl_findLibrary 报错）。测试里注入同一个根即可避开。
+        self.root = root if root is not None else ctk.CTk()
         self.ui_lang = load_ui_lang()
         self.root.title(APP_DISPLAY)
         self.root.geometry("920x520")

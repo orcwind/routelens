@@ -15,6 +15,31 @@ from routelens.engine import RunEngine
 from routelens.models import ReferenceRoute, RouteNode, format_delta, format_duration
 from routelens.split_panel import SplitPanel
 
+# 同一进程反复建/销 Tk 根会偶发毁掉共享的 Tcl 解释器（tcl_findLibrary 报错）。
+# 全部 GUI 用例共用一个根，测试结束时统一销毁。
+_SHARED_TK_ROOT: tk.Misc | None = None
+
+
+def shared_tk_root() -> tk.Misc:
+    """共享的 GUI 根（CustomTkinter，因为 RouteLensApp 会 configure(fg_color=...)）。"""
+    global _SHARED_TK_ROOT
+    if _SHARED_TK_ROOT is None:
+        import customtkinter as ctk
+
+        _SHARED_TK_ROOT = ctk.CTk()
+        _SHARED_TK_ROOT.withdraw()
+    return _SHARED_TK_ROOT
+
+
+def tearDownModule() -> None:
+    global _SHARED_TK_ROOT
+    if _SHARED_TK_ROOT is not None:
+        try:
+            _SHARED_TK_ROOT.destroy()
+        except tk.TclError:  # pragma: no cover - 解释器已被拆
+            pass
+        _SHARED_TK_ROOT = None
+
 
 class RouteLensSmokeTests(unittest.TestCase):
     def test_format_helpers(self) -> None:
@@ -256,8 +281,7 @@ class RouteLensSmokeTests(unittest.TestCase):
         self.assertIsNotNone(saved)
 
     def test_split_panel_redraw(self) -> None:
-        root = tk.Tk()
-        root.withdraw()
+        root = shared_tk_root()
         try:
             panel = SplitPanel(root, width=280, height=200)
             panel.pack()
@@ -270,8 +294,9 @@ class RouteLensSmokeTests(unittest.TestCase):
             panel.set_rows(rows, 1)
             root.update_idletasks()
             self.assertGreater(panel.winfo_width(), 0)
+            panel.destroy()
         finally:
-            root.destroy()
+            root.update_idletasks()
 
     def test_reference_route_no_append(self) -> None:
         engine = RunEngine(load_routelens_config())
@@ -395,9 +420,7 @@ class RouteLensSmokeTests(unittest.TestCase):
     def test_hotkey_digit_mapping(self) -> None:
         from routelens.gui import RouteLensApp, _NUMPAD_KEYCODE_TO_DIGIT
 
-        root = tk.Tk()
-        root.withdraw()
-        app = RouteLensApp()
+        app = RouteLensApp(root=shared_tk_root())
         app.root.withdraw()
         try:
             event = tk.Event()
@@ -406,8 +429,11 @@ class RouteLensSmokeTests(unittest.TestCase):
             self.assertEqual(app._key_to_hotkey_digit(event), "0")
             self.assertEqual(_NUMPAD_KEYCODE_TO_DIGIT.get(98), "2")
         finally:
-            app.root.destroy()
-            root.destroy()
+            app._stop_tray()
+            if app._global_hotkeys is not None:
+                app._global_hotkeys.shutdown()
+                app._global_hotkeys = None
+            app.root.update_idletasks()
 
     def test_truncate_poe1_at_karui_shores(self) -> None:
         from routelens.campaign_end import truncate_at_campaign_end
@@ -498,14 +524,10 @@ class RouteLensSmokeTests(unittest.TestCase):
 
     def test_act_view_labels_and_endgame_row(self) -> None:
         """幕视图：中文标签 + 终局行（PoE1 = 2_11 / PoE2 = G_Endgame_Town）。"""
-        import tkinter as tk
-
         from routelens.gui import RouteLensApp
         from routelens.models import ActiveRun, RunNode
 
-        root = tk.Tk()
-        root.withdraw()
-        app = RouteLensApp()
+        app = RouteLensApp(root=shared_tk_root())
         app.root.withdraw()
         try:
             app.ui_lang = "zh"
@@ -532,8 +554,11 @@ class RouteLensSmokeTests(unittest.TestCase):
             self.assertEqual(rows[4]["time"], "01:00")
             self.assertEqual(rows[-1]["time"], "00:10")
         finally:
-            app.root.destroy()
-            root.destroy()
+            app._stop_tray()
+            if app._global_hotkeys is not None:
+                app._global_hotkeys.shutdown()
+                app._global_hotkeys = None
+            app.root.update_idletasks()
 
     def test_expected_act_labels(self) -> None:
         from routelens.act_timing import expected_act_labels
