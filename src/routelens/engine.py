@@ -22,6 +22,9 @@ from .store import RouteLensStore
 
 StateCallback = Callable[[ActiveRun | None], None]
 
+# 向前匹配窗口：超过这个距离的同名区域不认（PoE1 各 Act 有同名区域，防止误跳整幕）
+MAX_FORWARD_MATCH = 15
+
 
 class RunEngine:
     """监听 Client.txt，管理一次 Run 的计时与节点记录。"""
@@ -623,15 +626,36 @@ class RunEngine:
                 self._emit_state()
 
     def _find_forward_match(self, area: str) -> int | None:
-        """仅在当前节点之后查找匹配（只认向前推进）。"""
+        """仅在当前节点之后查找匹配（只认向前推进）。
+
+        PoE1 的 Act 6–10 与 Act 1–5 有大量同名区域（Lioneye's Watch / The Coast…），
+        路线里会出现同名节点。若在 Act 1 死亡回城就向前搜到 Act 6 的同名节点，
+        会把中间几十个节点全部标成「跳过」。因此只在当前节点附近的窗口内匹配。
+        """
         assert self.active_run is not None
+        nodes = self.active_run.nodes
         start = max(0, self.active_run.current_index)
-        for index in range(start, len(self.active_run.nodes)):
-            node = self.active_run.nodes[index]
+        limit = min(len(nodes), start + MAX_FORWARD_MATCH)
+        for index in range(start, limit):
+            node = nodes[index]
             if node.completed and not node.skipped:
                 continue
             if self._areas_match(area, node.name):
                 return index
+        for index in range(limit, len(nodes)):
+            node = nodes[index]
+            if node.completed and not node.skipped:
+                continue
+            if self._areas_match(area, node.name):
+                test_log.write(
+                    "RUN",
+                    "忽略进图（匹配点超出识别窗口）",
+                    area=area,
+                    current_index=start,
+                    matched_index=index,
+                    window=MAX_FORWARD_MATCH,
+                )
+                break
         return None
 
     def _next_uncompleted_index(self, start: int = 0) -> int:
