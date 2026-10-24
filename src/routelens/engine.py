@@ -113,7 +113,7 @@ class RunEngine:
         nodes: list[RunNode] = []
         if reference:
             nodes = [
-                RunNode(name=node.name, completed=False)
+                RunNode(name=node.name, completed=False, area_id=node.area_id)
                 for node in filter_hideout_nodes(reference.nodes)
             ]
         run = ActiveRun(
@@ -173,7 +173,15 @@ class RunEngine:
             route_name=run.reference_route_name or "自由路线",
             total_seconds=self.elapsed_seconds(),
             finished_at=datetime.now().isoformat(timespec="seconds"),
-            nodes=[RunNode(name=node.name, seconds=node.seconds, completed=node.completed) for node in run.nodes],
+            nodes=[
+                RunNode(
+                    name=node.name,
+                    seconds=node.seconds,
+                    completed=node.completed,
+                    area_id=node.area_id,
+                )
+                for node in run.nodes
+            ],
         )
         self.store.save_result(result)
         if run.reference_route_id:
@@ -207,7 +215,12 @@ class RunEngine:
 
     def save_result_as_reference(self, result: RunResult, name: str) -> ReferenceRoute:
         nodes = [
-            RunNode(name=node.name, seconds=node.seconds, completed=True)
+            RunNode(
+                name=node.name,
+                seconds=node.seconds,
+                completed=True,
+                area_id=node.area_id,
+            )
             for node in result.nodes
             if node.completed and node.name
         ]
@@ -549,7 +562,7 @@ class RunEngine:
         self._sync_elapsed()
         assert self.active_run is not None
         segment_seconds = self._segment_seconds(event.timestamp)
-        if not self._record_node(area, segment_seconds, event.timestamp):
+        if not self._record_node(area, segment_seconds, event.timestamp, event.area_id):
             return
         self._last_area = area
         self._sync_current_area_display()
@@ -575,6 +588,7 @@ class RunEngine:
         area: str,
         segment_seconds: float,
         timestamp: datetime | None = None,
+        area_id: str = "",
     ) -> bool:
         assert self.active_run is not None
         display = self.display_name(area) or area
@@ -587,7 +601,7 @@ class RunEngine:
                 # （参考只提供已跑节点的时间基准，节点名由实际进图生成）
                 if self._can_free_record() and not self._is_recent_repeat(area):
                     self._close_current_node(segment_seconds)
-                    return self._append_free_node(area, display)
+                    return self._append_free_node(area, display, area_id)
                 if self._track_divergence(area, display, segment_seconds, timestamp):
                     return True
                 if has_reference:
@@ -627,6 +641,9 @@ class RunEngine:
                         skip_node.skipped = True
                         skip_node.seconds = None
                 self.active_run.current_index = match_index
+                # 记录实际到达区域的 area id（幕归属权威来源）
+                if area_id:
+                    self.active_run.nodes[match_index].area_id = area_id
                 test_log.write(
                     "RUN",
                     "前进跳段",
@@ -641,7 +658,7 @@ class RunEngine:
 
             return False
 
-        return self._append_free_node(area, display)
+        return self._append_free_node(area, display, area_id)
 
     def _track_divergence(
         self,
@@ -721,10 +738,12 @@ class RunEngine:
         node.completed = True
         node.skipped = False
 
-    def _append_free_node(self, area: str, display: str) -> bool:
+    def _append_free_node(self, area: str, display: str, area_id: str = "") -> bool:
         """把实际进入的区域追加为当前节点，并开始为它计时。"""
         assert self.active_run is not None
-        self.active_run.nodes.append(RunNode(name=display, completed=False))
+        self.active_run.nodes.append(
+            RunNode(name=display, completed=False, area_id=area_id)
+        )
         self.active_run.current_index = len(self.active_run.nodes) - 1
         test_log.write(
             "RUN",

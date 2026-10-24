@@ -314,6 +314,7 @@ def sessions_to_reference_routes(
                     or ""
                 ),
                 seconds=float(split.get("segment_seconds", 0)),
+                area_id=str(split.get("area_id") or ""),
             )
             for split in _filtered_splits(session, route_game)
             if split.get("area") or split.get("display") or split.get("area_en")

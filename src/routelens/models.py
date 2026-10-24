@@ -25,9 +25,10 @@ def format_delta(actual: float, reference: float | None) -> str:
 class RouteNode:
     name: str
     seconds: float | None = None
+    area_id: str = ""
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "seconds": self.seconds}
+        return {"name": self.name, "seconds": self.seconds, "area_id": self.area_id}
 
     @classmethod
     def from_dict(cls, data: dict) -> RouteNode:
@@ -35,6 +36,7 @@ class RouteNode:
         return cls(
             name=str(data.get("name", "")),
             seconds=float(raw) if raw is not None else None,
+            area_id=str(data.get("area_id", "") or ""),
         )
 
 
@@ -89,6 +91,7 @@ class RunNode:
     seconds: float | None = None
     completed: bool = False
     skipped: bool = False
+    area_id: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -96,6 +99,7 @@ class RunNode:
             "seconds": self.seconds,
             "completed": self.completed,
             "skipped": self.skipped,
+            "area_id": self.area_id,
         }
 
     @classmethod
@@ -106,6 +110,7 @@ class RunNode:
             seconds=float(raw) if raw is not None else None,
             completed=bool(data.get("completed", False)),
             skipped=bool(data.get("skipped", False)),
+            area_id=str(data.get("area_id", "") or ""),
         )
 
 

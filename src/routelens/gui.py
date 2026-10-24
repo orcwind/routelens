@@ -37,6 +37,8 @@ from .updater import (
 )
 from .version import VERSION
 from .models import ActiveRun, ReferenceRoute, RunResult, format_delta, format_duration
+from .act_map import act_count
+from .act_timing import build_act_timing, expected_act_labels
 from .setup import ensure_setup
 from .simulator import SimulatorPanel
 from .theme import (
@@ -141,6 +143,9 @@ class RouteLensApp:
         self._split_panel: SplitPanel | None = None
         self._split_page = 0
         self._split_page_var = tk.StringVar(value="")
+        # 分段视图：False = 节点视图（逐区域），True = 幕视图（逐幕汇总）
+        self._act_view = False
+        self._view_toggle_label: ctk.CTkLabel | None = None
         self._timer_label: ctk.CTkLabel | None = None
         self._total_delta_label: ctk.CTkLabel | None = None
         self._current_label: ctk.CTkLabel | None = None
@@ -259,6 +264,7 @@ class RouteLensApp:
             "0": self.engine.start_or_split,
             "2": self.engine.skip_split,
             "3": self.engine.pause_toggle,
+            "4": self._toggle_act_view,
             "5": self._confirm_reset,
             "8": self.engine.undo_split,
             "9": self._toggle_run_minimal,
@@ -295,6 +301,7 @@ class RouteLensApp:
             ("2", "hk_2"),
             ("8", "hk_8"),
             ("3", "hk_3"),
+            ("4", "hk_4"),
             ("5", "hk_5"),
             ("9", "hk_9"),
         )
@@ -1852,6 +1859,10 @@ class RouteLensApp:
         self._run_max_btn = title_btn("□", self._run_toggle_maximize, width=28)
         title_btn("─", self._run_minimize, width=28)
         title_btn(self._t("minimal"), self._enter_run_minimal, width=48)
+        # 节点/幕视图切换：放在标题栏，不挤节点列表
+        self._view_toggle_label = title_btn(
+            self._t("view_toggle"), self._toggle_act_view, width=64
+        )
         # 返回放标题栏：不占底栏，也避免挤在节点列表中间
         title_btn(self._t("back_short"), self._leave_run, width=40)
 
@@ -2572,6 +2583,37 @@ class RouteLensApp:
         else:
             self.current_var.set(self._t("press_0"))
 
+        if self._act_view:
+            rows, current_index = self._build_act_rows(run)
+        else:
+            rows, current_index = self._build_node_rows(run)
+
+        # 全部节点进可滚动容器；极简模式只画表头+当前行（含总时间与累计差）
+        total_text = self.elapsed_var.get()
+        total_delta_text = self._update_total_delta_display()
+        if self._run_minimal:
+            self._split_panel.set_rows(
+                rows,
+                current_index,
+                auto_scroll=False,
+                total_text=total_text,
+                total_delta_text=total_delta_text,
+                redraw=False,
+            )
+            self._ensure_minimal_content_width()
+            self._split_panel.redraw()
+        else:
+            self._split_panel.set_rows(
+                rows,
+                current_index,
+                auto_scroll=False,
+                total_text=total_text,
+                total_delta_text=total_delta_text,
+            )
+        self._split_page_var.set("")
+
+    def _build_node_rows(self, run: ActiveRun) -> tuple[list[dict], int]:
+        """节点视图：逐区域一行。"""
         rows: list[dict] = []
         for index, node in enumerate(run.nodes):
             ref_sec = self.engine.reference_seconds_at(index)
@@ -2608,30 +2650,120 @@ class RouteLensApp:
                     "status": status,
                 }
             )
+        return rows, run.current_index
 
-        # 全部节点进可滚动容器；极简模式只画表头+当前行（含总时间与累计差）
-        total_text = self.elapsed_var.get()
-        total_delta_text = self._update_total_delta_display()
-        if self._run_minimal:
-            self._split_panel.set_rows(
-                rows,
-                run.current_index,
-                auto_scroll=False,
-                total_text=total_text,
-                total_delta_text=total_delta_text,
-                redraw=False,
+    def _build_act_rows(self, run: ActiveRun) -> tuple[list[dict], int]:
+        """幕视图：逐幕一行（幕内所有区域用时求和）。
+
+        幕归属由 area id 判定（见 :mod:`routelens.act_map`），
+        因此不同玩家的节点顺序 / 支线不同都不影响分幕。
+        """
+        game_id = str(self.engine.config.game or "").strip().lower()
+
+        # 参考路线的分幕用时（用于「参考」列）
+        reference = self.engine.get_reference_route()
+        ref_acts: dict[int, float] = {}
+        if reference is not None:
+            for act_split in build_act_timing(
+                [
+                    {
+                        "area": node.name,
+                        "area_id": node.area_id,
+                        "segment_seconds": node.seconds or 0.0,
+                    }
+                    for node in reference.nodes
+                ],
+                game_id,
+            ).acts:
+                if act_split.act is not None:
+                    ref_acts[act_split.act] = ref_acts.get(act_split.act, 0.0) + act_split.segment_seconds
+
+        # 本次运行的节点（已完成的用已计时；当前的用实时段）
+        run_splits: list[dict] = []
+        for index, node in enumerate(run.nodes):
+            if node.completed and node.skipped:
+                continue
+            seconds = node.seconds or 0.0
+            if index == run.current_index and not node.completed:
+                if self.engine.timer_running or run.is_paused:
+                    seconds = self.engine.current_segment_seconds()
+            run_splits.append(
+                {
+                    "area": node.name,
+                    "area_id": node.area_id,
+                    "segment_seconds": seconds,
+                }
             )
-            self._ensure_minimal_content_width()
-            self._split_panel.redraw()
-        else:
-            self._split_panel.set_rows(
-                rows,
-                run.current_index,
-                auto_scroll=False,
-                total_text=total_text,
-                total_delta_text=total_delta_text,
+
+        timing = build_act_timing(run_splits, game_id)
+        # 幕骨架：PoE1 = Act 1..10，PoE2 = Act 1..4（未走到的幕显示为空）
+        total_acts = act_count(game_id)
+        by_act = {a.act: a for a in timing.acts if a.act is not None}
+        current_act = timing.current_act
+        act_labels = expected_act_labels(game_id, "en" if self.ui_lang == "en" else "zh_tw")
+
+        rows: list[dict] = []
+        current_index = 0
+        for act_number in range(1, total_acts + 1):
+            act_split = by_act.get(act_number)
+            ref_sec = ref_acts.get(act_number)
+            is_current = act_number == current_act
+            label = act_labels[act_number - 1] if act_number <= len(act_labels) else f"Act {act_number}"
+            if act_split is None:
+                # 未到达的幕：占位但不计时
+                rows.append(
+                    {
+                        "name": label,
+                        "time": "",
+                        "ref": format_duration(ref_sec) if ref_sec is not None else "",
+                        "delta": "",
+                        "status": "current" if is_current else "pending",
+                    }
+                )
+                if is_current:
+                    current_index = len(rows) - 1
+                continue
+
+            rows.append(
+                {
+                    "name": label,
+                    "time": format_duration(act_split.segment_seconds),
+                    "ref": format_duration(ref_sec) if ref_sec is not None else "",
+                    "delta": format_delta(act_split.segment_seconds, ref_sec),
+                    "status": "current" if is_current else "completed",
+                }
             )
-        self._split_page_var.set("")
+            if is_current:
+                current_index = len(rows) - 1
+
+        # 终局行（PoE1 = 2_11 卡鲁海滩；PoE2 = G_Endgame_Town）：单独一行，不计入任何幕
+        endgame = next((a for a in timing.acts if a.is_endgame), None)
+        if endgame is not None:
+            rows.append(
+                {
+                    "name": self._t("act_endgame"),
+                    "time": format_duration(endgame.segment_seconds),
+                    "ref": "",
+                    "delta": "",
+                    "status": "completed",
+                }
+            )
+        return rows, current_index
+
+    def _toggle_act_view(self) -> None:
+        """切换节点视图 / 幕视图。"""
+        self._act_view = not self._act_view
+        self._update_view_toggle_label()
+        self._refresh_run_view(self.engine.active_run)
+
+    def _update_view_toggle_label(self) -> None:
+        if self._view_toggle_label is None:
+            return
+        text = self._t("view_act") if self._act_view else self._t("view_node")
+        try:
+            self._view_toggle_label.configure(text=text)
+        except tk.TclError:  # pragma: no cover - 控件已销毁
+            pass
 
     def _update_total_delta_display(self) -> str:
         """刷新普通模式计时器下的累计差；返回文案供极简模式同色显示。"""

@@ -21,6 +21,7 @@ class GameEvent:
     timestamp: datetime
     raw_line: str = ""
     area: str = ""
+    area_id: str = ""
     character: str = ""
     character_class: str = ""
     level: int = 0

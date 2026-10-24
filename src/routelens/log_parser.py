@@ -7,12 +7,20 @@ from .events import EventType, GameEvent
 from .games.base import GameProfile
 from .games.registry import get_game
 
+# area id = 幕归属的唯一权威来源（PoE1: 1_5_6 / PoE2: G2_10_1）
+GENERATING_AREA_RE = re.compile(r"Generating level \d+ area \"([^\"]+)\"")
+
 
 def parse_timestamp(value: str) -> datetime:
     return datetime.strptime(value, "%Y/%m/%d %H:%M:%S")
 
 
-def parse_line(line: str, game: GameProfile | None = None) -> GameEvent | None:
+def parse_line(
+    line: str,
+    game: GameProfile | None = None,
+    *,
+    last_area_id: str = "",
+) -> GameEvent | None:
     profile = game or get_game(None)
     stripped = line.strip()
     if not stripped:
@@ -43,6 +51,7 @@ def parse_line(line: str, game: GameProfile | None = None) -> GameEvent | None:
                 timestamp=timestamp,
                 raw_line=stripped,
                 area=area,
+                area_id=last_area_id,
             )
 
         if event_type == EventType.CHARACTER_LEVEL:

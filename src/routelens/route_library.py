@@ -51,6 +51,7 @@ def _split_to_user_format(split: dict) -> dict:
         "segment_seconds": seconds,
         "cumulative_seconds": cumulative,
         "arrived_at": split.get("arrived_at"),
+        "area_id": split.get("area_id", "") or "",
     }
 
 

@@ -464,15 +464,85 @@ class RouteLensSmokeTests(unittest.TestCase):
             ["Kingsmarch", "The Ziggurat Refuge"],
         )
 
+        # 异界地图（area id = Map*）必须被排除，不进开荒路线。
+        # 实测：挖掘地 = MapExcavation
         truncated_map = truncate_at_campaign_end(
             [
-                {"area": "Kingsmarch"},
-                {"area": "挖掘地"},
-                {"area": "Creek"},
+                {"area": "Kingsmarch", "area_id": "G4_town"},
+                {"area": "挖掘地", "area_id": "MapExcavation"},
+                {"area": "Creek", "area_id": "MapCreek"},
             ],
             "poe2",
         )
         self.assertEqual([s["area"] for s in truncated_map], ["Kingsmarch"])
+
+    def test_area_id_dedup_keeps_act5_and_act10_same_name(self) -> None:
+        """Act 5 / Act 10 同名区域必须保留两段（只按区域名去重会吃掉后半程）。
+
+        实测真机日志：The Ossuary -> 1_5_6 (Act 5) 与 2_10_9 (Act 10)；
+        The Cathedral Rooftop -> 1_5_8 (Act 5) 与 2_10_1 (Act 10)。
+        """
+        from routelens.log_analyzer import AreaVisit, LogRunSession
+
+        session = LogRunSession(session_id=1, character="Tester")
+        from datetime import datetime
+
+        base = datetime(2026, 10, 15, 22, 0, 0)
+        session.visits = [
+            AreaVisit(area="The Ossuary", timestamp=base, area_id="1_5_6"),
+            AreaVisit(area="The Ossuary", timestamp=base.replace(hour=23), area_id="2_10_9"),
+        ]
+        splits = session.build_splits()
+        self.assertEqual(len(splits), 2)
+        self.assertEqual([s.area_id for s in splits], ["1_5_6", "2_10_9"])
+
+    def test_act_view_labels_and_endgame_row(self) -> None:
+        """幕视图：中文标签 + 终局行（PoE1 = 2_11 / PoE2 = G_Endgame_Town）。"""
+        import tkinter as tk
+
+        from routelens.gui import RouteLensApp
+        from routelens.models import ActiveRun, RunNode
+
+        root = tk.Tk()
+        root.withdraw()
+        app = RouteLensApp()
+        app.root.withdraw()
+        try:
+            app.ui_lang = "zh"
+            run = ActiveRun(
+                run_id="r1",
+                reference_route_id="ref1",
+                reference_route_name="测试",
+                nodes=[
+                    RunNode(name="The Coast", seconds=30.0, completed=True, area_id="1_1_2"),
+                    RunNode(name="The Ossuary", seconds=60.0, completed=True, area_id="1_5_6"),
+                    RunNode(name="Karui Shores", seconds=10.0, completed=True, area_id="2_11_endgame_town"),
+                ],
+            )
+            app._act_view = True
+            rows, current_index = app._build_act_rows(run)
+            names = [r["name"] for r in rows]
+            # PoE1 骨架 = 10 幕 + 终局行
+            self.assertEqual(len(rows), 11)
+            self.assertEqual(names[0], "第 1 幕")
+            self.assertEqual(names[4], "第 5 幕")
+            self.assertEqual(names[-1], "终局")
+            # 第 1 幕 = 30s（只有 1_1_2），第 5 幕 = 60s
+            self.assertEqual(rows[0]["time"], "00:30")
+            self.assertEqual(rows[4]["time"], "01:00")
+            self.assertEqual(rows[-1]["time"], "00:10")
+        finally:
+            app.root.destroy()
+            root.destroy()
+
+    def test_expected_act_labels(self) -> None:
+        from routelens.act_timing import expected_act_labels
+
+        self.assertEqual(len(expected_act_labels("poe1", "en")), 10)
+        self.assertEqual(len(expected_act_labels("poe2", "en")), 4)
+        self.assertEqual(expected_act_labels("poe1", "en")[0], "Act 1")
+        self.assertEqual(expected_act_labels("poe1", "zh_tw")[0], "第 1 幕")
+        self.assertEqual(expected_act_labels("poe2", "zh_tw")[3], "第 4 幕")
 
 
 if __name__ == "__main__":

@@ -20,6 +20,8 @@ CHAR_EN_RE = re.compile(r": (.+?) \((.+?)\) is now level ([0-9]+)")
 DEATH_CN_RE = re.compile(r": (.+?) 被[殺杀][害死]了。")
 DEATH_EN_RE = re.compile(r": You have died ([0-9]+) times\.")
 COMPANION_AREA_RE = re.compile(r"\[COMPANION\] \[AREA\] (.+)$")
+# area id = 幕归属的唯一权威来源（PoE1: 1_5_6 / PoE2: G2_10_1）
+GENERATING_AREA_RE = re.compile(r"Generating level \d+ area \"([^\"]+)\"")
 
 
 @dataclass
@@ -27,6 +29,7 @@ class AreaVisit:
     area: str
     timestamp: datetime
     chapter: str = ""
+    area_id: str = ""
 
 
 @dataclass
@@ -37,6 +40,7 @@ class SplitNode:
     display: str
     segment_seconds: float
     arrived_at: datetime
+    area_id: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -46,6 +50,7 @@ class SplitNode:
             "display": self.display,
             "segment_seconds": self.segment_seconds,
             "arrived_at": self.arrived_at.isoformat(),
+            "area_id": self.area_id,
         }
 
 
@@ -90,9 +95,12 @@ class LogRunSession:
         for visit in self.visits:
             if chapters_filter is not None and visit.chapter not in chapters_filter:
                 continue
-            if visit.area in seen:
+            # 去重身份必须含 area_id：PoE1 的 Act 5/Act 10 区域名几乎相同，
+            # 只按区域名去重会把后半程整段吃掉。
+            identity = f"{visit.area}#{visit.area_id}" if visit.area_id else visit.area
+            if identity in seen:
                 continue
-            seen.add(visit.area)
+            seen.add(identity)
             if splits and last_time is not None:
                 splits[-1].segment_seconds = max(
                     0.0, (visit.timestamp - last_time).total_seconds()
@@ -105,6 +113,7 @@ class LogRunSession:
                     display=visit.area,
                     segment_seconds=0.0,
                     arrived_at=visit.timestamp,
+                    area_id=visit.area_id,
                 )
             )
             last_time = visit.timestamp
@@ -313,12 +322,15 @@ def analyze_client_log(
     sessions: list[LogRunSession] = []
     current: LogRunSession | None = None
     current_chapter = ""
+    # 最近的 area id（Generating level ... area "X_Y"）→ 供幕归属判定使用
+    pending_area_id = ""
 
     for line in lines:
         if profile.log_open_marker in line:
             current = _finalize_session(sessions, current)
             current = _start_new_session(sessions)
             current_chapter = ""
+            pending_area_id = ""
             continue
 
         if line.startswith("#"):
@@ -326,6 +338,10 @@ def analyze_client_log(
 
         if current is None:
             continue
+
+        generating = GENERATING_AREA_RE.search(line)
+        if generating:
+            pending_area_id = generating.group(1).strip()
 
         timestamp = parse_timestamp(line)
         if timestamp is None:
@@ -367,7 +383,14 @@ def analyze_client_log(
         if current.visits and current.visits[-1].area == area:
             continue
 
-        current.visits.append(AreaVisit(area=area, timestamp=timestamp, chapter=current_chapter))
+        current.visits.append(
+            AreaVisit(
+                area=area,
+                timestamp=timestamp,
+                chapter=current_chapter,
+                area_id=pending_area_id,
+            )
+        )
         if current.started_at is None:
             current.started_at = timestamp
         current.ended_at = timestamp

@@ -74,7 +74,7 @@ class RouteLensStore:
             route_id=str(uuid.uuid4()),
             name=name,
             nodes=[
-                RouteNode(name=node.name, seconds=node.seconds)
+                RouteNode(name=node.name, seconds=node.seconds, area_id=node.area_id)
                 for node in nodes
                 if node.completed and node.name
             ],

@@ -7,7 +7,7 @@ from pathlib import Path
 from .events import EventBus
 from .games.base import GameProfile
 from .games.registry import get_game
-from .log_parser import parse_line
+from .log_parser import GENERATING_AREA_RE, parse_line
 
 
 class LogWatcher:
@@ -26,6 +26,8 @@ class LogWatcher:
         self._thread: threading.Thread | None = None
         self._offset = 0
         self._paused = False
+        # 最近的 area id（幕归属权威来源）
+        self._last_area_id = ""
 
     @property
     def paused(self) -> bool:
@@ -97,7 +99,10 @@ class LogWatcher:
         with self.log_path.open("r", encoding="utf-8", errors="replace") as handle:
             handle.seek(self._offset)
             for line in handle:
-                event = parse_line(line, self.game)
+                generating = GENERATING_AREA_RE.search(line)
+                if generating:
+                    self._last_area_id = generating.group(1).strip()
+                event = parse_line(line, self.game, last_area_id=self._last_area_id)
                 if event is not None:
                     self.event_bus.publish(event)
             self._offset = handle.tell()
