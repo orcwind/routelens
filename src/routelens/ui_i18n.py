@@ -132,6 +132,7 @@ STRINGS: dict[str, dict[str, str]] = {
 下次选中同一路线，点「继续」即可接着上次的时间与节点继续。
 
 小键盘速查：0 切区 · 2 跳过 · 8 撤销 · 3 暂停 · 5 重置 · 9 极简
+全局热键：Shift+S 鼠标穿透（面板不挡游戏点击，显示不中断）
 """,
     },
     UI_LANG_EN: {
@@ -260,6 +261,7 @@ Closing the app auto-saves progress.
 Next time, select the same route and click Continue to resume time and node index.
 
 Hotkeys: 0 split · 2 skip · 8 undo · 3 pause · 5 reset · 9 minimal
+Global: Shift+S toggle click-through (panel won't block in-game clicks, display keeps running)
 """,
     },
 }
