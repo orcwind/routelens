@@ -58,11 +58,16 @@ def _split_area(split: dict) -> str:
     return split.get("area_en") or split.get("area") or ""
 
 
+# 同名区域再次出现时，与上一次同名的距离小于该值 = 回城/折返噪声（丢弃）；
+# 大于等于该值 = 真正的新一段进度（PoE1 的 Act 6–10 会复用 Act 1–5 区域名）。
+REPEAT_NAME_MIN_GAP = 20
+
+
 def _split_key(split: dict) -> str:
     """一次「到访」的身份。
 
-    PoE1 的 Act 6–10 会重复使用 Act 1–5 的区域名（Lioneye's Watch / The Coast…），
-    所以**不能**只用区域名去重，否则后半程会被整段删掉。
+    不能只用区域名：PoE1 的 Act 6–10 会重复使用 Act 1–5 的区域名
+    （Lioneye's Watch / The Coast…），只用名字去重会把后半程整段删掉。
     有到达时间戳时用它做唯一身份（同一次到访才合并、重复导入仍幂等）。
     """
     arrived = str(split.get("arrived_at") or "").strip()
@@ -97,20 +102,46 @@ def _collect_chapters(*routes_or_sessions: dict) -> list[str]:
     return chapters
 
 
-def _merge_splits(existing: list[dict], new: list[dict]) -> list[dict]:
+def _merge_splits(
+    existing: list[dict],
+    new: list[dict],
+    *,
+    keep_repeated_names: bool = False,
+) -> list[dict]:
+    """合并节点。
+
+    ``keep_repeated_names=False``（PoE2 / 通用）：同名区域只保留首次，
+    回城与重复读写都会塌成一个节点。
+
+    ``keep_repeated_names=True``（PoE1）：Act 6–10 会复用 Act 1–5 的区域名，
+    必须保留远处再次出现的同名区域；只有距离很近的同名（回城折返）才算噪声。
+    """
     merged = [_split_to_user_format(item) if "elapsed" not in item else dict(item) for item in existing]
     seen = {_split_key(split) for split in merged if _split_key(split)}
+    seen_areas = {_split_area(split) for split in merged if _split_area(split)}
+    last_index_by_area: dict[str, int] = {}
+    for index, split in enumerate(merged):
+        area = _split_area(split)
+        if area:
+            last_index_by_area[area] = index
     for item in new:
         split = _split_to_user_format(item) if "elapsed" not in item else dict(item)
         key = _split_key(split)
         if not key or key in seen:
             continue
-        # 连续两次进入同一区域（复活回城 / 重复读写）算噪声，只保留第一次。
-        # 非相邻的重复区域名必须保留：那是后半程（Act 6–10）复用同名区域。
-        if merged and _split_area(merged[-1]) == _split_area(split):
-            continue
+        area = _split_area(split)
+        if area:
+            if keep_repeated_names:
+                previous = last_index_by_area.get(area)
+                if previous is not None and len(merged) - 1 - previous < REPEAT_NAME_MIN_GAP:
+                    continue
+            elif area in seen_areas:
+                continue
         seen.add(key)
         merged.append(split)
+        if area:
+            seen_areas.add(area)
+            last_index_by_area[area] = len(merged) - 1
     return merged
 
 
@@ -162,13 +193,18 @@ def merge_session_dicts(
     *,
     source: str,
     chapters_filter: set[str] | None = None,
+    game_id: str = "",
 ) -> dict:
     ordered = sorted(sessions, key=lambda item: item.get("started_at") or "")
     route = session_to_route(ordered[0], source=source, chapters_filter=chapters_filter)
     route["session_ids"] = []
+    # PoE1 的 Act 6–10 复用 Act 1–5 区域名，必须保留远处同名节点；PoE2 继续按名去重
+    keep_repeated = str(game_id or "").strip().lower() == "poe1"
     for session in ordered:
         splits = [_split_to_user_format(item) for item in session.get("splits", [])]
-        route["splits"] = _merge_splits(route.get("splits", []), splits)
+        route["splits"] = _merge_splits(
+            route.get("splits", []), splits, keep_repeated_names=keep_repeated
+        )
         route["deaths"] = int(route.get("deaths", 0)) + int(session.get("deaths", 0))
         session_id = session.get("session_id")
         if session_id is not None:

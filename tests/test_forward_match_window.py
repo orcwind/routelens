@@ -34,15 +34,31 @@ class ForwardMatchWindowTests(unittest.TestCase):
         engine.simulate_area("Lioneye's Watch", write_client=False)
         engine.simulate_area("The Coast", write_client=False)
 
-        # Act 1 死亡后回到同名城镇：不能跳到远处 Act 6 的同名节点
+        # Act 1 死亡后回到同名城镇：路线里有同名节点，不能跳到远处 Act 6 的那个
         engine.simulate_area("Lioneye's Watch", write_client=False)
 
         assert engine.active_run is not None
-        self.assertLess(engine.active_run.current_index, MAX_FORWARD_MATCH)
+        self.assertEqual(engine.active_run.current_index, 1)
         self.assertFalse(
             any(node.skipped for node in engine.active_run.nodes),
             "不应把中间节点整段标成跳过",
         )
+
+    def test_unique_name_still_allows_long_jump(self) -> None:
+        engine = self._engine()
+        names = ["The Coast"] + [f"Filler {i}" for i in range(MAX_FORWARD_MATCH + 5)]
+        names.append("The Mud Flats")
+        route = ReferenceRoute(
+            route_id="test-unique",
+            name="LongJump",
+            nodes=[RouteNode(name=name) for name in names],
+        )
+        engine.new_run(route)
+        engine.simulate_area("The Coast", write_client=False)
+        engine.simulate_area("The Mud Flats", write_client=False)
+
+        assert engine.active_run is not None
+        self.assertEqual(engine.active_run.current_index, len(names) - 1)
 
     def test_nearby_duplicate_still_matches(self) -> None:
         engine = self._engine()

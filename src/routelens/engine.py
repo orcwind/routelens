@@ -628,14 +628,16 @@ class RunEngine:
     def _find_forward_match(self, area: str) -> int | None:
         """仅在当前节点之后查找匹配（只认向前推进）。
 
-        PoE1 的 Act 6–10 与 Act 1–5 有大量同名区域（Lioneye's Watch / The Coast…），
-        路线里会出现同名节点。若在 Act 1 死亡回城就向前搜到 Act 6 的同名节点，
-        会把中间几十个节点全部标成「跳过」。因此只在当前节点附近的窗口内匹配。
+        路线里同名区域出现多次时（PoE1 的 Act 6–10 复用 Act 1–5 区域名），
+        只在一定窗口内匹配：否则 Act 1 死亡回城会命中 Act 6 的同名节点，
+        把中间几十个节点全部标成「跳过」。
+        名字唯一的区域保持原有行为（允许远距离跳段）。
         """
         assert self.active_run is not None
         nodes = self.active_run.nodes
         start = max(0, self.active_run.current_index)
-        limit = min(len(nodes), start + MAX_FORWARD_MATCH)
+        occurrences = sum(1 for node in nodes if self._areas_match(area, node.name))
+        limit = len(nodes) if occurrences <= 1 else min(len(nodes), start + MAX_FORWARD_MATCH)
         for index in range(start, limit):
             node = nodes[index]
             if node.completed and not node.skipped:

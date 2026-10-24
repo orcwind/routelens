@@ -253,7 +253,7 @@ def _merged_route_to_session_dict(route: dict, *, raw_session_count: int) -> dic
     }
 
 
-def _group_and_merge_sessions(session_dicts: list[dict]) -> list[dict]:
+def _group_and_merge_sessions(session_dicts: list[dict], *, game_id: str = "") -> list[dict]:
     """同一角色的多次 Client 启动片段合并为一条候选路线。"""
     grouped: dict[str, list[dict]] = {}
     for session in session_dicts:
@@ -268,7 +268,7 @@ def _group_and_merge_sessions(session_dicts: list[dict]) -> list[dict]:
             single["merged_session_count"] = 1
             merged.append(single)
             continue
-        route = merge_session_dicts(ordered, source="client_txt")
+        route = merge_session_dicts(ordered, source="client_txt", game_id=game_id)
         merged.append(_merged_route_to_session_dict(route, raw_session_count=len(ordered)))
     merged.sort(key=lambda item: item.get("ended_at") or item.get("started_at") or "", reverse=True)
     return merged
@@ -442,7 +442,7 @@ def import_routes_from_client(
                 poe2_area_keys=poe2_area_keys,
                 default_game_id=game_id,
             )
-            for item in _group_and_merge_sessions(session_dicts)
+            for item in _group_and_merge_sessions(session_dicts, game_id=game_id)
         ]
         complete_count = sum(
             1
