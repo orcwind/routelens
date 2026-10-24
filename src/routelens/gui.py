@@ -843,6 +843,10 @@ class RouteLensApp:
         detected = summary.get("detected_locale")
         if detected:
             message += self._t("import_msg_locale").format(locale=detected)
+        game_id = str(summary.get("game_id") or "").strip().lower()
+        if game_id in {"poe1", "poe2"}:
+            game_label = self._t("game_poe2") if game_id == "poe2" else self._t("game_poe1")
+            message += self._t("import_msg_game").format(game=game_label)
         if log_path:
             message += self._t("import_msg_log").format(path=log_path)
         return message

@@ -15,6 +15,8 @@ from .hideout_filter import is_hideout_area
 
 from .area_filter import filter_hideout_nodes
 from .client_import import import_routes_from_client
+from .config import clear_client_path_for_other_games
+from .game_detect import detect_game_from_log, resolve_import_game
 from .models import ActiveRun, ReferenceRoute, RunNode, RunResult
 from .store import RouteLensStore
 
@@ -28,6 +30,14 @@ class RunEngine:
         self.config = config
         self.game = get_game(config.game)
         self.store = RouteLensStore(config.resolved_data_dir)
+        for name, before, after in self.store.repair_client_route_games():
+            test_log.write(
+                "MIGRATE",
+                "修正路线游戏归属",
+                route=name,
+                before=before,
+                after=after,
+            )
         self.area_registry = AreaRegistry(
             config.resolved_area_names_path,
             self.game,
@@ -210,6 +220,22 @@ class RunEngine:
         if target_path is None or not Path(target_path).is_file():
             raise FileNotFoundError("未找到 Client.txt，请在设置中选择路径。")
         target_path = Path(target_path)
+
+        # 以日志内容为准：选错游戏行 / 设置里游戏不对时，不能把整批路线标错。
+        detected_game = detect_game_from_log(target_path)
+        resolved_game = resolve_import_game(target_path, target_game)
+        if resolved_game:
+            configured = str(target_game or "").strip().lower()
+            if detected_game and detected_game != configured:
+                test_log.write(
+                    "IMPORT",
+                    "日志内容与设置游戏不一致，按日志归类",
+                    setting=configured or "unknown",
+                    detected=detected_game,
+                    path=str(target_path),
+                )
+            target_game = resolved_game
+            clear_client_path_for_other_games(str(target_path.resolve()), resolved_game)
 
         save_routelens_setup(str(target_path.resolve()), target_game)
         self.config = load_routelens_config()

@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .models import ActiveRun, ReferenceRoute, RouteNode, RunNode, RunResult
+from .game_detect import detect_game_from_area_names
 
 
 class RouteLensStore:
@@ -107,6 +108,45 @@ class RouteLensStore:
                 route.game_id = target_game
             self.save_route(route)
         return len(routes)
+
+    def repair_client_route_games(self) -> list[tuple[str, str, str]]:
+        """按节点区域名修正历史误标的游戏归属（幂等）。
+
+        v0.1.1 曾把导入目标游戏强制套到所有路线，PoE1 日志从 PoE2 入口
+        导入后会被整批标成 poe2。这里按区域名重判，证据不足不动。
+        返回 [(路线名, 原归属, 新归属)]。
+        """
+        fixed: list[tuple[str, str, str]] = []
+        backup_dir = self.routes_dir / "_gamefix_backup"
+        for path in sorted(self.routes_dir.glob("*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if data.get("source") != "client_txt":
+                continue
+            current = str(data.get("game_id") or "").strip().lower()
+            if current not in {"poe1", "poe2"}:
+                continue
+            names = [
+                str(node.get("name") or "")
+                for node in (data.get("nodes") or [])
+                if isinstance(node, dict)
+            ]
+            guess = detect_game_from_area_names(names)
+            if guess is None or guess == current:
+                continue
+            try:
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                (backup_dir / path.name).write_text(
+                    path.read_text(encoding="utf-8"), encoding="utf-8"
+                )
+            except OSError:
+                continue
+            data["game_id"] = guess
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            fixed.append((str(data.get("name") or path.stem), current, guess))
+        return fixed
 
     def upsert_client_routes(self, routes: list[ReferenceRoute]) -> int:
         existing = {route.route_id: route for route in self.list_routes()}

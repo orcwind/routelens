@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -35,6 +36,30 @@ def save_routelens_setup(client_path: str, game_id: str) -> None:
     companion["game_display_name"] = display
     by_game = companion.setdefault("client_txt_by_game", {})
     by_game[game_id] = client_path
+    COMPANION_CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=4), encoding="utf-8")
+
+
+def clear_client_path_for_other_games(client_path: str, keep_game: str) -> None:
+    """从其它游戏行移除同一 Client.txt 路径（选错游戏行导入后纠正显示）。"""
+    keep = str(keep_game or "").strip().lower()
+    if not keep:
+        return
+    target = os.path.normcase(os.path.abspath(client_path))
+    ensure_config_file(COMPANION_CONFIG_PATH)
+    data = json.loads(COMPANION_CONFIG_PATH.read_text(encoding="utf-8"))
+    companion = data.get("companion") or {}
+    by_game = companion.get("client_txt_by_game") or {}
+    removed: list[str] = []
+    for game_id, raw in list(by_game.items()):
+        if str(game_id).strip().lower() == keep:
+            continue
+        if raw and os.path.normcase(os.path.abspath(str(raw))) == target:
+            by_game.pop(game_id, None)
+            removed.append(str(game_id))
+    if not removed:
+        return
+    companion["client_txt_by_game"] = by_game
+    data["companion"] = companion
     COMPANION_CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=4), encoding="utf-8")
 
 
