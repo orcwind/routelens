@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import tkinter as tk
+from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 
 import customtkinter as ctk
@@ -1448,6 +1449,9 @@ class RouteLensApp:
         self._btn(right, self._t("new_run"), self._on_new_run, variant="secondary", width=16).pack(
             anchor="w", fill=tk.X
         )
+        self._btn(
+            right, self._t("free_run"), self._on_free_run, variant="secondary", width=16
+        ).pack(anchor="w", fill=tk.X, pady=(6, 0))
 
         self._refresh_route_list()
 
@@ -1769,6 +1773,12 @@ class RouteLensApp:
         test_log.write("USER", "新 Run", route_id=route.route_id, route_name=route.name)
         self._show_run()
 
+    def _on_free_run(self) -> None:
+        """不选参考路线：节点名与时间全部按实际进图记录，用来生成新路线。"""
+        self.engine.begin_new_run(None)
+        test_log.write("USER", "自由路线 Run")
+        self._show_run()
+
     def _on_continue(self) -> None:
         route = self._route_by_id(self._selected_route_id)
         if route is None:
@@ -1868,6 +1878,15 @@ class RouteLensApp:
         )
         save_lbl.pack(side=tk.RIGHT, padx=2)
         save_lbl.bind("<Button-1>", lambda _e: self._save_and_close_run())
+        self._save_route_label = ctk.CTkLabel(
+            foot,
+            text=self._t("save_as_route"),
+            text_color=GOLD_FG,
+            font=FONT_FOOT,
+            cursor="hand2",
+        )
+        self._save_route_label.pack(side=tk.RIGHT, padx=(0, 8))
+        self._save_route_label.bind("<Button-1>", lambda _e: self._save_current_as_route())
         self._undo_reset_label = ctk.CTkLabel(
             foot,
             text=self._t("undo_reset"),
@@ -2054,6 +2073,31 @@ class RouteLensApp:
     def _save_and_close_run(self) -> None:
         test_log.write("USER", "保存并关闭 Run")
         self._on_close()
+
+    def _save_current_as_route(self) -> None:
+        """把本次实际跑出的节点与时间保存成一条新参考路线。"""
+        if not self.engine.has_active_run:
+            return
+        self.engine._sync_elapsed()
+        run = self.engine.active_run
+        assert run is not None
+        completed = [n for n in run.nodes if n.completed and n.name]
+        if not completed:
+            messagebox.showinfo("提示", "还没有跑出任何节点。", parent=self.root)
+            return
+        default_name = run.reference_route_name or datetime.now().strftime("%m-%d %H:%M")
+        name = self._ask_route_name("保存为新路线", default_name)
+        if not name:
+            return
+        route = self.engine.save_run_as_reference(name)
+        test_log.write(
+            "USER", "保存为新路线", name=name, route_id=route.route_id, nodes=len(route.nodes)
+        )
+        messagebox.showinfo(
+            "已保存",
+            f"已保存为新路线「{name}」（{len(route.nodes)} 节点）。",
+            parent=self.root,
+        )
 
     def _confirm_reset(self) -> None:
         if not self.engine.has_active_run:

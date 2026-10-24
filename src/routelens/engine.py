@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
@@ -18,12 +18,17 @@ from .client_import import import_routes_from_client
 from .config import clear_client_path_for_other_games
 from .game_detect import detect_game_from_log, resolve_import_game
 from .models import ActiveRun, ReferenceRoute, RunNode, RunResult
+from .route_library import REPEAT_NAME_MIN_GAP
 from .store import RouteLensStore
 
 StateCallback = Callable[[ActiveRun | None], None]
 
 # 向前匹配窗口：超过这个距离的同名区域不认（PoE1 各 Act 有同名区域，防止误跳整幕）
 MAX_FORWARD_MATCH = 15
+
+# 连续 N 个「不在参考路线里」的区域 → 判定参考路线与实际路径已分叉
+# （跨幕 / 玩家走的不是同一条路），之后按实际进图记录
+FREE_RECORD_CONFIRM = 2
 
 
 class RunEngine:
@@ -52,6 +57,8 @@ class RunEngine:
         self._timer_started_at: datetime | None = None
         self._last_area = ""
         self._state_callback: StateCallback | None = None
+        # 参考路线里匹配不上、等待确认是否分叉的区域（(显示名, 进入时刻)）
+        self._pending_areas: list[tuple[str, datetime]] = []
         self.event_bus.subscribe(EventType.AREA_ENTERED, self._on_area_entered)
 
     def set_state_callback(self, callback: StateCallback | None) -> None:
@@ -119,6 +126,7 @@ class RunEngine:
         self.active_run = run
         self._timer_started_at = None
         self._last_area = ""
+        self._pending_areas = []
         self._persist()
         self._emit_state()
         return run
@@ -127,6 +135,7 @@ class RunEngine:
         self.active_run = run
         self._timer_started_at = datetime.now() if not run.is_paused else None
         self._last_area = run.current_area
+        self._pending_areas = []
         self._persist()
         self._emit_state()
         return run
@@ -141,6 +150,7 @@ class RunEngine:
         self.active_run = run
         self._timer_started_at = None
         self._last_area = run.current_area
+        self._pending_areas = []
         self._persist()
         self._emit_state()
         return run
@@ -153,6 +163,8 @@ class RunEngine:
             return None
         self._sync_elapsed()
         assert self.active_run is not None
+        # 收尾最后一个节点（参考最后一个 / 自由记录最后一个），否则它永远没有时间
+        self._close_current_node(self.current_segment_seconds())
         run = self.active_run
         run.is_active = False
         result = RunResult(
@@ -270,7 +282,7 @@ class RunEngine:
             return None
         return saved
 
-    def begin_new_run(self, reference: ReferenceRoute) -> ActiveRun:
+    def begin_new_run(self, reference: ReferenceRoute | None) -> ActiveRun:
         self.store.clear_active_run()
         run = self.new_run(reference)
         self._enter_waiting_to_start(run)
@@ -328,6 +340,7 @@ class RunEngine:
         )
         self._timer_started_at = None
         self._last_area = ""
+        self._pending_areas = []
         self._persist()
         self._emit_state()
 
@@ -461,9 +474,14 @@ class RunEngine:
 
     def reference_seconds_at(self, index: int) -> float | None:
         route = self.get_reference_route()
-        if route is None or index < 0 or index >= len(route.nodes):
+        if route is None or index < 0:
             return None
-        return route.nodes[index].seconds
+        # 索引必须与 active_run.nodes 对齐：建 Run 时参考节点已过滤掉藏身处
+        ref_nodes = filter_hideout_nodes(route.nodes)
+        if index >= len(ref_nodes):
+            # 超出参考范围的节点是实际跑出来的自由节点，没有参考时间
+            return None
+        return ref_nodes[index].seconds
 
     def comparison_delta_seconds(self) -> float | None:
         """相对参考的累计超前/落后（LiveSplit Ahead/Behind）。
@@ -478,16 +496,28 @@ class RunEngine:
         route = self.get_reference_route()
         if route is None or not route.nodes:
             return None
-        index = max(0, min(self.active_run.current_index, len(route.nodes) - 1))
+        ref_nodes = filter_hideout_nodes(route.nodes)
+        if not ref_nodes:
+            return None
+        index = max(0, min(self.active_run.current_index, len(ref_nodes) - 1))
         ref_sum = 0.0
         found = False
-        for node in route.nodes[: index + 1]:
+        for node in ref_nodes[: index + 1]:
             if node.seconds is None:
                 continue
             ref_sum += float(node.seconds)
             found = True
         if not found:
             return None
+        # 参考节点已跑完：之后的节点属于实际自由记录，没有参考可比，差值必须冻结在
+        # 「跑完参考那一刻」，否则总差值会随着继续游玩一路涨。
+        if self.active_run.current_index >= len(ref_nodes):
+            actual = sum(
+                float(node.seconds or 0.0)
+                for node in self.active_run.nodes[: len(ref_nodes)]
+                if node.completed and not node.skipped
+            )
+            return actual - ref_sum
         return self.elapsed_seconds() - ref_sum
 
     def current_segment_seconds(self) -> float:
@@ -519,7 +549,7 @@ class RunEngine:
         self._sync_elapsed()
         assert self.active_run is not None
         segment_seconds = self._segment_seconds(event.timestamp)
-        if not self._record_node(area, segment_seconds):
+        if not self._record_node(area, segment_seconds, event.timestamp):
             return
         self._last_area = area
         self._sync_current_area_display()
@@ -540,7 +570,12 @@ class RunEngine:
         )
         return max(0.0, self.elapsed_seconds() - completed_sum)
 
-    def _record_node(self, area: str, segment_seconds: float) -> bool:
+    def _record_node(
+        self,
+        area: str,
+        segment_seconds: float,
+        timestamp: datetime | None = None,
+    ) -> bool:
         assert self.active_run is not None
         display = self.display_name(area) or area
         has_reference = bool(self.active_run.reference_route_id)
@@ -548,6 +583,13 @@ class RunEngine:
         if self.active_run.nodes:
             match_index = self._find_forward_match(area)
             if match_index is None:
+                # 参考路线已跑完：关闭最后一个参考节点，之后按实际进图自由记录。
+                # （参考只提供已跑节点的时间基准，节点名由实际进图生成）
+                if self._can_free_record() and not self._is_recent_repeat(area):
+                    self._close_current_node(segment_seconds)
+                    return self._append_free_node(area, display)
+                if self._track_divergence(area, display, segment_seconds, timestamp):
+                    return True
                 if has_reference:
                     test_log.write(
                         "RUN",
@@ -560,6 +602,7 @@ class RunEngine:
                 return False
 
             if match_index == self.active_run.current_index:
+                self._pending_areas = []
                 test_log.write(
                     "RUN",
                     "忽略进图（重复当前区）",
@@ -570,6 +613,7 @@ class RunEngine:
                 return False
 
             if match_index > self.active_run.current_index:
+                self._pending_areas = []
                 closed_index = self.active_run.current_index
                 active = self.active_run.nodes[closed_index]
                 if not active.completed:
@@ -597,19 +641,106 @@ class RunEngine:
 
             return False
 
-        self.active_run.nodes.append(
-            RunNode(name=display, seconds=segment_seconds, completed=True)
-        )
-        self.active_run.current_index = len(self.active_run.nodes)
+        return self._append_free_node(area, display)
+
+    def _track_divergence(
+        self,
+        area: str,
+        display: str,
+        segment_seconds: float,
+        timestamp: datetime | None,
+    ) -> bool:
+        """参考路线与实际路径分叉时，按实际进图继续记录。
+
+        单次「进图不在参考里」可能只是回城 / 折返（随后会回到参考路径），所以先挂起；
+        连续 FREE_RECORD_CONFIRM 个都不在参考里 = 参考已断（跨幕 / 走了别的路），
+        此时作废剩余参考节点，把实际经过的区域补成新节点继续计时。
+        """
+        assert self.active_run is not None
+        now = timestamp or datetime.now()
+        if self._is_recent_repeat(area):
+            # 回城 / 死亡折返：不记录，也不累积「分叉」证据
+            self._pending_areas = []
+            return False
+        self._pending_areas.append((display, now))
+        if len(self._pending_areas) < FREE_RECORD_CONFIRM:
+            return False
+
+        pending = self._pending_areas
+        self._pending_areas = []
+        # 当前参考节点收尾时间 = 进入第一个挂起区域之前
+        base = now - timedelta(seconds=max(0.0, segment_seconds))
+        self._close_current_node(max(0.0, (pending[0][1] - base).total_seconds()))
+        # 剩余参考节点已经不可能再跑：标记跳过，避免继续阻塞记录
+        for node in self.active_run.nodes[self.active_run.current_index + 1 :]:
+            if not node.completed:
+                node.completed = True
+                node.skipped = True
+                node.seconds = None
+        for index in range(len(pending) - 1):
+            name, arrived = pending[index]
+            following = pending[index + 1][1]
+            self.active_run.nodes.append(
+                RunNode(
+                    name=name,
+                    seconds=max(0.0, (following - arrived).total_seconds()),
+                    completed=True,
+                )
+            )
+        last_name, _last_arrived = pending[-1]
+        self.active_run.nodes.append(RunNode(name=last_name, completed=False))
+        self.active_run.current_index = len(self.active_run.nodes) - 1
         test_log.write(
             "RUN",
-            "追加自由路线节点",
-            area=area,
-            display=display,
-            index=self.active_run.current_index - 1,
-            seconds=round(segment_seconds, 2),
+            "参考路线分叉，转为实际记录",
+            areas=[name for name, _ in pending],
+            index=self.active_run.current_index,
         )
         return True
+
+    def _can_free_record(self) -> bool:
+        """当前节点是否已是参考路线的最后一个节点（之后按实际进图自由记录）。"""
+        if not self.active_run:
+            return False
+        nodes = self.active_run.nodes
+        if not nodes:
+            return True
+        return self._next_uncompleted_index(self.active_run.current_index + 1) >= len(nodes)
+
+    def _close_current_node(self, segment_seconds: float) -> None:
+        """把当前节点收尾（节点时间 = 该区域停留时长）。"""
+        if not self.active_run:
+            return
+        index = self.active_run.current_index
+        if not 0 <= index < len(self.active_run.nodes):
+            return
+        node = self.active_run.nodes[index]
+        if node.completed:
+            return
+        node.seconds = segment_seconds
+        node.completed = True
+        node.skipped = False
+
+    def _append_free_node(self, area: str, display: str) -> bool:
+        """把实际进入的区域追加为当前节点，并开始为它计时。"""
+        assert self.active_run is not None
+        self.active_run.nodes.append(RunNode(name=display, completed=False))
+        self.active_run.current_index = len(self.active_run.nodes) - 1
+        test_log.write(
+            "RUN",
+            "参考已跑完，记录新节点",
+            area=area,
+            display=display,
+            index=self.active_run.current_index,
+        )
+        return True
+
+    def _is_recent_repeat(self, area: str) -> bool:
+        """该区域是否刚跑过（回城 / 死亡折返 / 反复进出），避免污染自由节点。"""
+        if not self.active_run:
+            return False
+        recent = self.active_run.nodes[-REPEAT_NAME_MIN_GAP:]
+        return any(self._areas_match(area, node.name) for node in recent)
 
     def _manual_split(self) -> None:
         assert self.active_run is not None
