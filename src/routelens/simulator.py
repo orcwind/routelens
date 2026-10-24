@@ -108,7 +108,7 @@ class SimulatorPanel(ctk.CTkFrame):
                 text=name,
                 bg=LIST_BG,
                 fg=TEXT_FG,
-                font=("Consolas", 11),
+                font=("Consolas", 13),
                 anchor="w",
             ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 8))
 

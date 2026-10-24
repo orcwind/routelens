@@ -48,9 +48,11 @@ from .theme import (
     BTN_PRIMARY_HOVER,
     CORNER_RADIUS,
     FONT_HEADING,
+    FONT_FOOT,
     FONT_HINT,
     FONT_TIMER,
     FONT_TITLE,
+    FONT_TITLEBAR,
     FONT_UI,
     FONT_UI_SM,
     GOLD_FG,
@@ -160,6 +162,8 @@ class RouteLensApp:
         self._hotkey_retry_job: str | None = None
         self._run_minimal_rows = 1
         self._hotkey_hint_label: ctk.CTkFrame | ctk.CTkLabel | None = None
+        self._hotkey_bar_items: list[tuple[ctk.CTkLabel, int]] = []
+        self._hotkey_bar_height = 0
         self._undo_reset_label: ctk.CTkLabel | None = None
         self._route_name_label: ctk.CTkLabel | None = None
         self._run_maximized = False
@@ -275,10 +279,16 @@ class RouteLensApp:
         action()
 
     def _build_clickable_hotkey_bar(self, foot: ctk.CTkFrame) -> None:
-        """底栏快捷键做成可点击文字按钮（与小键盘同功能）。"""
-        bar = ctk.CTkFrame(foot, fg_color=BG, corner_radius=0)
+        """底栏快捷键做成可点击文字按钮（与小键盘同功能）。
+
+        字号放大后整行可能放不下（窄窗 / 英文），这里按可用宽度自动折行。
+        子控件一律用 place（Tk 不允许同一控件混用 pack/place）。
+        """
+        bar = ctk.CTkFrame(foot, fg_color=BG, corner_radius=0, height=22)
         bar.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        bar.pack_propagate(False)
         self._hotkey_hint_label = bar
+        self._hotkey_bar_items = []
         specs = (
             ("0", "hk_0"),
             ("2", "hk_2"),
@@ -289,15 +299,16 @@ class RouteLensApp:
         )
         hover_fg = TEXT_FG
         normal_fg = MUTED_FG
-        font = ("Microsoft YaHei", 9)
+        font = FONT_FOOT
         for index, (digit, key) in enumerate(specs):
             if index:
-                ctk.CTkLabel(
+                sep = ctk.CTkLabel(
                     bar,
                     text="·",
                     text_color=MUTED_FG,
                     font=font,
-                ).pack(side=tk.LEFT, padx=2)
+                )
+                self._hotkey_bar_items.append((sep, 4))
             lbl = ctk.CTkLabel(
                 bar,
                 text=self._t(key),
@@ -305,7 +316,7 @@ class RouteLensApp:
                 font=font,
                 cursor="hand2",
             )
-            lbl.pack(side=tk.LEFT)
+            self._hotkey_bar_items.append((lbl, 0))
 
             def _enter(_e, widget=lbl) -> None:
                 widget.configure(text_color=hover_fg)
@@ -318,12 +329,13 @@ class RouteLensApp:
             lbl.bind("<Button-1>", lambda _e, d=digit: self._invoke_hotkey_digit(d))
 
         # Shift+S 鼠标穿透：显示快捷键，可点击切换（穿透时点不到，靠全局热键）
-        ctk.CTkLabel(
+        sep = ctk.CTkLabel(
             bar,
             text="·",
             text_color=MUTED_FG,
             font=font,
-        ).pack(side=tk.LEFT, padx=2)
+        )
+        self._hotkey_bar_items.append((sep, 4))
         ct_lbl = ctk.CTkLabel(
             bar,
             text=f"Shift+S {self._t('click_through_off')}",
@@ -331,9 +343,59 @@ class RouteLensApp:
             font=font,
             cursor="hand2",
         )
-        ct_lbl.pack(side=tk.LEFT)
+        self._hotkey_bar_items.append((ct_lbl, 0))
         ct_lbl.bind("<Button-1>", lambda _e: self._toggle_click_through())
         self._click_through_label = ct_lbl
+        bar.bind("<Configure>", self._on_hotkey_bar_resize)
+
+    def _on_hotkey_bar_resize(self, event: tk.Event | None = None) -> None:
+        bar = self._hotkey_hint_label
+        if not isinstance(bar, ctk.CTkFrame):
+            return
+        width = event.width if event is not None else bar.winfo_width()
+        self._relayout_hotkey_bar(bar, width)
+
+    def _relayout_hotkey_bar(self, bar: ctk.CTkFrame, width: int) -> None:
+        """把热键项按可用宽度流式折行（place 定位，不参与父容器尺寸推导）。
+
+        width 是 bar 自身宽度 —— bar 以 expand=True 填充 foot 的剩余空间，
+        右侧「撤销重置 / 保存并关闭」已先 pack 占位，所以这里不会越界压住它们。
+        """
+        items = self._hotkey_bar_items
+        if not items or width <= 1:
+            return
+        try:
+            bar.update_idletasks()
+        except tk.TclError:
+            return
+        avail = width
+        x = 0
+        y = 0
+        line_h = 0
+        for widget, gap in items:
+            try:
+                w = widget.winfo_reqwidth() + gap
+                h = widget.winfo_reqheight()
+            except tk.TclError:
+                continue
+            if x > 0 and x + w > avail:
+                y += line_h
+                x = 0
+                line_h = 0
+            try:
+                widget.place(x=x, y=y)
+            except tk.TclError:
+                continue
+            x += w
+            line_h = max(line_h, h)
+        total_h = y + line_h
+        if total_h == self._hotkey_bar_height:
+            return
+        self._hotkey_bar_height = total_h
+        try:
+            bar.configure(height=total_h)
+        except tk.TclError:
+            pass
 
     def _toggle_run_minimal(self) -> None:
         """9：极简 ↔ 正常。"""
@@ -831,6 +893,8 @@ class RouteLensApp:
         self._total_delta_label = None
         self._current_label = None
         self._hotkey_hint_label = None
+        self._hotkey_bar_items = []
+        self._hotkey_bar_height = 0
         self._undo_reset_label = None
         self._route_name_label = None
         self._clear_run_resize_grips()
@@ -1754,7 +1818,7 @@ class RouteLensApp:
             titlebar,
             text=APP_DISPLAY,
             text_color=MUTED_FG,
-            font=("Microsoft YaHei", 11),
+            font=FONT_TITLEBAR,
         ).pack(side=tk.LEFT, padx=(8, 0))
 
         def title_btn(text: str, command, *, width: int = 36) -> ctk.CTkLabel:
@@ -1762,7 +1826,7 @@ class RouteLensApp:
                 titlebar,
                 text=text,
                 text_color=MUTED_FG,
-                font=("Consolas", 12) if text in {"─", "□", "×", "❐"} else ("Microsoft YaHei", 11),
+                font=("Consolas", 14) if text in {"─", "□", "×", "❐"} else FONT_TITLEBAR,
                 width=width,
                 cursor="hand2",
             )
@@ -1789,12 +1853,13 @@ class RouteLensApp:
         foot = ctk.CTkFrame(panel, fg_color=BG, corner_radius=0)
         foot.pack(side=tk.BOTTOM, fill=tk.X, padx=2, pady=(0, 2))
         self._run_foot = foot
-        self._build_clickable_hotkey_bar(foot)
+        # 顺序要紧：右侧按钮先 pack，热键条最后 pack(expand=True) 吃剩余宽度；
+        # 反过来会被热键条挤掉，右侧「保存并关闭」被裁出窗口。
         save_lbl = ctk.CTkLabel(
             foot,
             text=self._t("save_close"),
             text_color=MUTED_FG,
-            font=("Microsoft YaHei", 9),
+            font=FONT_FOOT,
             cursor="hand2",
         )
         save_lbl.pack(side=tk.RIGHT, padx=2)
@@ -1803,12 +1868,13 @@ class RouteLensApp:
             foot,
             text=self._t("undo_reset"),
             text_color=GOLD_FG,
-            font=("Microsoft YaHei", 9),
+            font=FONT_FOOT,
             cursor="hand2",
         )
         self._undo_reset_label.pack(side=tk.RIGHT, padx=(0, 6))
         self._undo_reset_label.bind("<Button-1>", lambda _e: self._undo_reset())
         self._update_undo_reset_button()
+        self._build_clickable_hotkey_bar(foot)
 
         timer_row = ctk.CTkFrame(panel, fg_color=BG, corner_radius=0)
         timer_row.pack(side=tk.TOP, fill=tk.X, pady=(0, 0))
@@ -1830,7 +1896,7 @@ class RouteLensApp:
             timer_row,
             textvariable=self.current_var,
             text_color=GOLD_FG,
-            font=("Microsoft YaHei", 10),
+            font=FONT_UI,
             anchor="e",
             cursor="hand2",
         )

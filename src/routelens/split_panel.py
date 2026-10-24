@@ -214,7 +214,7 @@ class SplitPanel(tk.Canvas):
         total_w = self._max_cell_width("total", totals, bump=bump)
         delta_total_w = 0
         if self._total_delta_text:
-            delta_total_w = self._text_width(self._total_delta_text, self._font(10, bump=bump)) + gap
+            delta_total_w = self._text_width(self._total_delta_text, self._font(11, bump=bump)) + gap
 
         # pad + 完整节点名 + 各数值列（含累计差与总时间）
         return (
@@ -274,23 +274,29 @@ class SplitPanel(tk.Canvas):
         # 预留当前行 bump=2 的最宽数值，找不到合适字号则继续缩小
         for _ in range(12):
             self._scale = scale
-            self._row_height = max(14, int(20 * scale))
+            self._row_height = max(16, int(24 * scale))
             name_w, _time_r, _ref_r, _delta_r, _total_r = self._column_layout(width)
             if name_w >= 36 or scale <= 0.55:
                 break
             scale = max(0.55, scale * 0.92)
 
     def _font(self, base: int, *, bold: bool = False, bump: int = 0) -> tuple[str, int, str]:
-        size = max(7, int(base * self._scale) + bump)
+        # 极简模式保持小字号（产品目标：极简越小越好）；普通模式放大并设下限
+        floor = 7 if self._minimal else 10
+        size = max(floor, int(base * self._scale) + bump)
         style = "bold" if bold else "normal"
         return ("Consolas", size, style)
 
     def _name_font(self, *, bump: int = 0) -> tuple[str, int, str]:
-        size = max(7, int(11 * self._scale) + bump)
+        if self._minimal:
+            return ("Microsoft YaHei", max(7, int(11 * self._scale) + bump), "normal")
+        size = max(11, int(12 * self._scale) + bump)
         return ("Microsoft YaHei", size, "normal")
 
     def _header_font(self) -> tuple[str, int, str]:
-        size = max(7, int(11 * self._scale))
+        if self._minimal:
+            return ("Microsoft YaHei", max(7, int(11 * self._scale)), "normal")
+        size = max(11, int(12 * self._scale))
         return ("Microsoft YaHei", size, "normal")
 
     def _header_height(self) -> int:
@@ -315,7 +321,7 @@ class SplitPanel(tk.Canvas):
         return measure_font.measure(text)
 
     def _max_cell_width(self, key: str, samples: list[str], *, bump: int) -> int:
-        font = self._font(10, bump=bump)
+        font = self._font(11, bump=bump)
         header_font = self._header_font()
         widths = [self._text_width(s, font) for s in samples if s]
         # 表头本身
@@ -350,7 +356,7 @@ class SplitPanel(tk.Canvas):
             total_w = self._max_cell_width("total", totals, bump=bump)
             delta_total_w = 0
             if self._total_delta_text:
-                delta_total_w = self._text_width(self._total_delta_text, self._font(10, bump=bump)) + gap
+                delta_total_w = self._text_width(self._total_delta_text, self._font(11, bump=bump)) + gap
             total_r = right
             delta_r = total_r - total_w - delta_total_w - gap
             ref_r = delta_r - delta_w - gap
@@ -383,7 +389,7 @@ class SplitPanel(tk.Canvas):
         ref_text = str(row.get("ref", ""))
         delta_text = str(row.get("delta", ""))
         name_font = self._name_font(bump=bump)
-        cell_font = self._font(10, bump=bump)
+        cell_font = self._font(11, bump=bump)
         raw_name = str(row.get("name", ""))
         # 极简模式禁止省略号截断；由窗口自动扩宽保证完整显示
         if self._minimal:

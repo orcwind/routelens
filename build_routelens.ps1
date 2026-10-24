@@ -52,17 +52,21 @@ New-Item -ItemType Directory -Force -Path $dataOut | Out-Null
 
 Write-Host "==> zip $ZipName (不含用户数据)"
 # 打包时排除 data\：发布包应是干净安装包，用户数据只在构建后的本机 dist 里
-$DataStash = Join-Path $OutDir "_data_stash"
+# 暂存目录必须挪到 $OutDir 外面 —— Compress-Archive 会把空目录也打进 zip
+$DataStash = Join-Path $Root "dist\_data_stash_tmp"
 $HadLocal = Test-Path (Join-Path $OutDir "data")
+if (Test-Path $DataStash) { Remove-Item $DataStash -Recurse -Force }
 if ($HadLocal) {
-    if (Test-Path $DataStash) { Remove-Item $DataStash -Recurse -Force }
     Move-Item (Join-Path $OutDir "data") $DataStash
     New-Item -ItemType Directory -Force -Path $dataOut | Out-Null
 }
 Compress-Archive -Path $OutDir -DestinationPath (Join-Path $Root "dist\$ZipName") -Force
-if (Test-Path $DataStash) {
-    Remove-Item (Join-Path $OutDir "data") -Recurse -Force
+if ($HadLocal -and (Test-Path $DataStash)) {
+    # 还原本机 dist 的用户数据
+    Remove-Item (Join-Path $OutDir "data") -Recurse -Force -ErrorAction SilentlyContinue
     Move-Item $DataStash (Join-Path $OutDir "data")
+} elseif (Test-Path $DataStash) {
+    Remove-Item $DataStash -Recurse -Force
 }
 
 # 还原构建前备份的用户数据（路线 / 活动进度不因重新构建而丢失）

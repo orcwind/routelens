@@ -25,12 +25,15 @@ BTN_HEIGHT = 40
 
 # 使用元组字体，避免在创建 CTk 根窗口前实例化 CTkFont
 FONT_UI = ("Microsoft YaHei", 13)
-FONT_UI_SM = ("Microsoft YaHei", 12)
+FONT_UI_SM = ("Microsoft YaHei", 13)
 FONT_TITLE = ("Microsoft YaHei", 22, "bold")
 FONT_HEADING = ("Microsoft YaHei", 17, "bold")
 FONT_TIMER = ("Consolas", 30, "bold")
 FONT_SPLIT = ("Consolas", 13)
-FONT_HINT = ("Microsoft YaHei", 12)
+FONT_HINT = ("Microsoft YaHei", 13)
+# 最小可读字号下限（截图反馈：最小号字太小）
+FONT_FOOT = ("Microsoft YaHei", 11)
+FONT_TITLEBAR = ("Microsoft YaHei", 13)
 
 
 def apply_theme() -> None:
