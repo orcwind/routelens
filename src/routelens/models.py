@@ -26,9 +26,16 @@ class RouteNode:
     name: str
     seconds: float | None = None
     area_id: str = ""
+    # 试炼进门节点：每次试炼都要记（area id 相同也不能去重）
+    is_trial_entry: bool = False
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "seconds": self.seconds, "area_id": self.area_id}
+        return {
+            "name": self.name,
+            "seconds": self.seconds,
+            "area_id": self.area_id,
+            "is_trial_entry": self.is_trial_entry,
+        }
 
     @classmethod
     def from_dict(cls, data: dict) -> RouteNode:
@@ -37,6 +44,7 @@ class RouteNode:
             name=str(data.get("name", "")),
             seconds=float(raw) if raw is not None else None,
             area_id=str(data.get("area_id", "") or ""),
+            is_trial_entry=bool(data.get("is_trial_entry", False)),
         )
 
 
@@ -92,6 +100,8 @@ class RunNode:
     completed: bool = False
     skipped: bool = False
     area_id: str = ""
+    # 试炼进门节点：每次试炼都要记（area id 相同也不能去重）
+    is_trial_entry: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -100,6 +110,7 @@ class RunNode:
             "completed": self.completed,
             "skipped": self.skipped,
             "area_id": self.area_id,
+            "is_trial_entry": self.is_trial_entry,
         }
 
     @classmethod
@@ -111,6 +122,7 @@ class RunNode:
             completed=bool(data.get("completed", False)),
             skipped=bool(data.get("skipped", False)),
             area_id=str(data.get("area_id", "") or ""),
+            is_trial_entry=bool(data.get("is_trial_entry", False)),
         )
 
 

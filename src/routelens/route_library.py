@@ -52,6 +52,8 @@ def _split_to_user_format(split: dict) -> dict:
         "cumulative_seconds": cumulative,
         "arrived_at": split.get("arrived_at"),
         "area_id": split.get("area_id", "") or "",
+        # 试炼进门节点：每次试炼都要记（area id 相同也不能去重）
+        "is_trial_entry": bool(split.get("is_trial_entry")),
     }
 
 
@@ -120,6 +122,10 @@ def _merge_splits(
     判据 = area id（唯一标识一个区域实例）：
     同名但 area id 不同 → 不同区域（Act 5 的 The Ossuary vs Act 10 的）→ 保留；
     area id 相同 → 同一个区域又去了一次 → 丢弃。
+
+    **试炼进门节点例外**：``is_trial_entry=True`` 的节点每次都要保留 ——
+    多次试炼的进门 area id 完全相同（Labyrinth_Airlock），
+    按 area id 去重会把第二次以后的试炼全删掉。
     """
     merged = [_split_to_user_format(item) if "elapsed" not in item else dict(item) for item in existing]
     seen = {_split_key(split) for split in merged if _split_key(split)}
@@ -131,16 +137,17 @@ def _merge_splits(
         if area:
             last_index_by_area[area] = index
         area_id = str(split.get("area_id") or "").strip()
-        if area_id:
+        if area_id and not split.get("is_trial_entry"):
             seen_area_ids.add(area_id)
     for item in new:
         split = _split_to_user_format(item) if "elapsed" not in item else dict(item)
+        is_trial = bool(split.get("is_trial_entry"))
         key = _split_key(split)
         if not key or key in seen:
             continue
         area = _split_area(split)
         area_id = str(split.get("area_id") or "").strip()
-        if area:
+        if area and not is_trial:
             if keep_repeated_names:
                 # area id 相同 = 同一个区域又去了一次（回城 / 来回跑）→ 丢弃
                 if area_id and area_id in seen_area_ids:
@@ -158,7 +165,7 @@ def _merge_splits(
         if area:
             seen_areas.add(area)
             last_index_by_area[area] = len(merged) - 1
-        if area_id:
+        if area_id and not is_trial:
             seen_area_ids.add(area_id)
     return merged
 

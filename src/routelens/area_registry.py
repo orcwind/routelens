@@ -5,6 +5,23 @@ from pathlib import Path
 from .games.base import GameProfile
 
 
+# area id → 区域名（进程内累积，跨会话）。
+# 用途：试炼本体的显示名（例：祖靈的試煉 = G4_4_3）可能在别的时刻才出现，
+# 本次没访问到本体 id 时也能取到正确名字。
+_AREA_NAMES: dict[str, str] = {}
+
+
+def remember_area_name(area_id: str, area: str) -> None:
+    """记录 area id → 区域名。"""
+    if area_id and area:
+        _AREA_NAMES.setdefault(area_id, area)
+
+
+def known_area_name(area_id: str) -> str:
+    """查 area id 对应的区域名（未知则返回空串）。"""
+    return _AREA_NAMES.get(area_id, "")
+
+
 class AreaRegistry:
     """区域名一律以 Client.txt 原文为准，不做译名/别名映射。"""
 

@@ -5,10 +5,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from .area_registry import AreaRegistry
+from .area_registry import AreaRegistry, known_area_name, remember_area_name
 from .games.base import GameProfile
 from .games.registry import get_game
 from .log_parser import CLIENT_ID_RE, FOREIGN_CLIENT_IDS, GENERATING_AREA_RE, SCENE_RE
+from .trial import detect_trial, trial_body_ids, trial_node_name
 
 TIMESTAMP_RE = re.compile(r"^([0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})")
 LOADING_RE = re.compile(r"\[LOADING SCREEN\] \((.+?)\)")
@@ -30,7 +31,6 @@ class AreaVisit:
     chapter: str = ""
     area_id: str = ""
 
-
 @dataclass
 class SplitNode:
     index: int
@@ -42,6 +42,8 @@ class SplitNode:
     area_id: str = ""
     # 重复进入同一地点时，并回首次出现节点的序号；None = 该节点独立保留
     merged_into: int | None = None
+    # 是否是试炼的「进门」节点（试炼房间会折叠进来；每次进门独立成节点）
+    is_trial_entry: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -52,6 +54,8 @@ class SplitNode:
             "segment_seconds": self.segment_seconds,
             "arrived_at": self.arrived_at.isoformat(),
             "area_id": self.area_id,
+            # 试炼进门节点：每次试炼都要记，合并路线时不得按 area id 去重
+            "is_trial_entry": self.is_trial_entry,
         }
 
 
@@ -64,6 +68,8 @@ class LogRunSession:
     deaths: int = 0
     started_at: datetime | None = None
     ended_at: datetime | None = None
+    # 归属游戏（poe1 / poe2）：试炼结构按游戏不同
+    game_id: str = ""
 
     @property
     def chapter_label(self) -> str:
@@ -99,6 +105,9 @@ class LogRunSession:
 
         身份用 area id 而非区域名：PoE1 的 Act 5 与 Act 10 区域名几乎相同
         （实测 200 个区域名中 34 个跨幕重名），按名字去重会把后半程整段吃掉。
+
+        **试炼折叠**：一次试炼只记录进门那一次，试炼里的房间不单独记录
+        （见 `trial.py`）。多次试炼每次都记 —— 每次进门都是一个新节点。
         """
         splits: list[SplitNode] = []
         last_time: datetime | None = None
@@ -124,9 +133,17 @@ class LogRunSession:
             )
             last_time = visit.timestamp
 
-        # ── 阶段 2：同一地点只保留首次出现，其余时间并回原节点 ──
+        # ── 阶段 2：试炼折叠（试炼房间并入同一次进门） ──
+        # 必须**先于**去重：多次试炼的进门 id 完全相同（Labyrinth_Airlock），
+        # 若先按 id 去重，第二次以后的试炼会被当成「又去了一次」而丢掉。
+        splits = self._fold_trials(splits)
+
+        # ── 阶段 3：同一地点只保留首次出现，其余时间并回原节点 ──
+        # 试炼进门节点豁免去重（每次试炼都要记）
         first_index_by_identity: dict[str, int] = {}
         for index, split in enumerate(splits):
+            if split.is_trial_entry:
+                continue
             identity = self._split_identity(split)
             if identity in first_index_by_identity:
                 original = splits[first_index_by_identity[identity]]
@@ -136,6 +153,71 @@ class LogRunSession:
             first_index_by_identity[identity] = index
 
         return [s for s in splits if s.merged_into is None]
+
+    def _fold_trials(self, splits: list[SplitNode]) -> list[SplitNode]:
+        """把试炼里的房间折叠进「进门那一次」。
+
+        规则（用户 2026-10-25 定）：
+        - 一次试炼只记录进门那一次，房间不单独记录
+        - 多次试炼每次都记录（每次进门都是新节点）
+
+        **一次试炼的边界**：从第一次踏入试炼区域开始，到玩家**离开**试炼区域
+        （进入任何非试炼区域）为止。这期间再遇到任何试炼区域都属于同一次试炼
+        —— 包括回到同一个 id（例：混沌試煉里在「混沌神殿」与「混沌試煉」之间来回）。
+
+        只有真正离开试炼区域后再次进入，才是**另一次**试炼。
+
+        房间的时间并入进门节点（时间不丢）。
+
+        **显示名统一取试炼本体**：祖靈的試煉的「进门」是「悉妮蔻拉之眼」，
+        但节点应显示「祖靈的試煉」—— 用本体内体 id 的区域名覆盖。
+        """
+        game = self.game_id
+        if not game:
+            return splits
+
+        # 本体 id → 区域名（日志里出现过的；跨会话累积）
+        body_names: dict[str, str] = {}
+        for split in splits:
+            info = detect_trial(split.area_id, game)
+            if info.in_trial and info.body_id == split.area_id and split.area:
+                body_names.setdefault(info.body_id, split.area)
+        for body_id in trial_body_ids():
+            name = known_area_name(body_id)
+            if name:
+                body_names.setdefault(body_id, name)
+        current_entry: SplitNode | None = None
+        current_trial = ""
+
+        for split in splits:
+            info = detect_trial(split.area_id, game)
+            if not info.in_trial:
+                # 离开试炼区域 → 下次再进来是另一次试炼
+                current_entry = None
+                current_trial = ""
+                continue
+            if current_entry is None or info.trial_id != current_trial:
+                # 本次试炼的第一个区域 = 进门，记为独立节点
+                current_entry = split
+                current_trial = info.trial_id
+                split.is_trial_entry = True
+                # 显示名统一规则（见 trial_node_name）：
+                # 进门就是本体 → 用日志里的区域名；
+                # 进门是入口大厅 / 前厅 → 用本体的名字
+                body_name = body_names.get(info.body_id, "")
+                node_name = trial_node_name(
+                    info.trial_id, split.area_id, split.area, body_name
+                )
+                if node_name:
+                    split.area = node_name
+                    split.area_en = node_name
+                    split.display = node_name
+                continue
+            # 同一次试炼的后续区域 → 时间并入进门节点
+            current_entry.segment_seconds += split.segment_seconds
+            split.merged_into = current_entry.index
+
+        return splits
 
     @staticmethod
     def _split_identity(split: SplitNode) -> str:
@@ -240,8 +322,11 @@ def _extract_character_name(line: str) -> str | None:
 def _start_new_session(
     sessions: list[LogRunSession],
     character: str = "",
+    game_id: str = "",
 ) -> LogRunSession:
-    return LogRunSession(session_id=len(sessions) + 1, character=character)
+    return LogRunSession(
+        session_id=len(sessions) + 1, character=character, game_id=game_id
+    )
 
 
 def _session_time_bounds(session: LogRunSession) -> None:
@@ -295,7 +380,9 @@ def _switch_character(
 ) -> LogRunSession:
     trailing = _split_trailing_visits_after_idle(current)
     _finalize_session(sessions, current)
-    new_session = _start_new_session(sessions, character=new_character)
+    new_session = _start_new_session(
+        sessions, character=new_character, game_id=current.game_id
+    )
     if trailing:
         new_session.visits = trailing
         _session_time_bounds(new_session)
@@ -360,7 +447,7 @@ def analyze_client_log(
     for line in lines:
         if profile.log_open_marker in line:
             current = _finalize_session(sessions, current)
-            current = _start_new_session(sessions)
+            current = _start_new_session(sessions, game_id=str(game_id or ""))
             current_chapter = ""
             pending_area_id = ""
             scene_consumed = False
@@ -451,6 +538,9 @@ def analyze_client_log(
                 area_id=area_id,
             )
         )
+        if area_id:
+            # 记录 area id → 区域名，供试炼本体取名（见 trial.py / area_registry）
+            remember_area_name(area_id, area)
         if current.started_at is None:
             current.started_at = timestamp
         current.ended_at = timestamp

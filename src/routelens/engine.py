@@ -14,12 +14,14 @@ from . import test_log
 from .hideout_filter import is_hideout_area
 
 from .area_filter import filter_hideout_nodes
+from .area_registry import known_area_name
 from .client_import import import_routes_from_client
 from .config import clear_client_path_for_other_games
 from .game_detect import detect_game_from_log, resolve_import_game
 from .models import ActiveRun, ReferenceRoute, RunNode, RunResult
 from .route_library import REPEAT_NAME_MIN_GAP
 from .store import RouteLensStore
+from .trial import detect_trial, trial_body_id, trial_node_name
 
 StateCallback = Callable[[ActiveRun | None], None]
 
@@ -59,6 +61,10 @@ class RunEngine:
         self._state_callback: StateCallback | None = None
         # 参考路线里匹配不上、等待确认是否分叉的区域（(显示名, 进入时刻)）
         self._pending_areas: list[tuple[str, datetime]] = []
+        # 当前进行中的试炼（trial_id, 进门节点的 index）；离开试炼区域后清空
+        self._active_trial: tuple[str, int] | None = None
+        # 刚进入试炼、节点尚未建好时的标记（建好后补 index）
+        self._pending_trial_entry: str | None = None
         self.event_bus.subscribe(EventType.AREA_ENTERED, self._on_area_entered)
 
     def set_state_callback(self, callback: StateCallback | None) -> None:
@@ -574,7 +580,11 @@ class RunEngine:
         assert self.active_run is not None
         segment_seconds = self._segment_seconds(event.timestamp)
         if not self._record_node(area, segment_seconds, event.timestamp, event.area_id):
+            # 进图没被记录 → 试炼进门标记作废（否则会挂到后面的节点上）
+            self._pending_trial_entry = None
             return
+        # 试炼进门节点已建好 → 记住它，后续试炼房间都并进来
+        self._resolve_pending_trial_entry()
         self._last_area = area
         self._sync_current_area_display()
         self._persist()
@@ -605,11 +615,20 @@ class RunEngine:
         display = self.display_name(area) or area
         has_reference = bool(self.active_run.reference_route_id)
 
+        # 试炼折叠：一次试炼只记进门那一次，试炼里的房间不单独记录。
+        # 玩家在试炼内来回（混沌神殿 ↔ 混沌試煉）也算同一次试炼。
+        trial_info = detect_trial(area_id, self.config.game)
+        if self._merge_into_active_trial(area, display, area_id, segment_seconds):
+            return True
+
         # 回到已经去过的地点（从 Act 3 回 Act 1、同幕内来回跑）：
         # 不新增节点，把停留时间并回原节点。
         # 只在**自由记录**时生效 —— 有参考路线时由「向前匹配窗口」负责
         # 回退识别（PoE1 的 Act 6 复用 Act 1 区域名，窗口规则已经处理过）。
-        if not has_reference or self._can_free_record():
+        # 试炼进门例外：多次试炼的进门 area id 相同，每次都要记。
+        if trial_info.in_trial:
+            pass
+        elif not has_reference or self._can_free_record():
             revisited = self._find_revisited_node(area, area_id)
             if revisited is not None and revisited != self.active_run.current_index:
                 self._close_current_node(segment_seconds)
@@ -620,7 +639,9 @@ class RunEngine:
             if match_index is None:
                 # 参考路线已跑完：关闭最后一个参考节点，之后按实际进图自由记录。
                 # （参考只提供已跑节点的时间基准，节点名由实际进图生成）
-                if self._can_free_record() and not self._is_recent_repeat(area, area_id):
+                if self._can_free_record() and not (
+                    self._is_recent_repeat(area, area_id) and not trial_info.in_trial
+                ):
                     self._close_current_node(segment_seconds)
                     return self._append_free_node(area, display, area_id)
                 if self._track_divergence(area, display, segment_seconds, timestamp, area_id):
@@ -819,6 +840,79 @@ class RunEngine:
             name=node.name,
         )
         return True
+
+    def _merge_into_active_trial(
+        self,
+        area: str,
+        display: str,
+        area_id: str,
+        segment_seconds: float,
+    ) -> bool:
+        """试炼折叠（实时）：试炼里的房间不单独记录，时间并入「进门那一次」。
+
+        规则（用户 2026-10-25 定）：
+        - 一次试炼只记录进门那一次，房间不单独记录
+        - 多次试炼每次都记录（每次进门都是一个新节点）
+
+        「一次试炼」的边界 = 从进入试炼区域开始，到玩家**离开**试炼区域为止。
+        这期间再遇到任何试炼区域都属于同一次试炼（混沌神殿 ↔ 混沌試煉 来回也算）。
+
+        返回 True 表示已折叠处理（调用方不要再建节点）。
+        """
+        assert self.active_run is not None
+        info = detect_trial(area_id, self.config.game)
+        if not info.in_trial:
+            # 离开试炼区域 → 下次再进来是另一次试炼
+            self._active_trial = None
+            self._pending_trial_entry = None
+            return False
+
+        if self._active_trial is not None:
+            trial_id, entry_index = self._active_trial
+            if trial_id == info.trial_id and 0 <= entry_index < len(self.active_run.nodes):
+                entry = self.active_run.nodes[entry_index]
+                entry.seconds = (entry.seconds or 0.0) + segment_seconds
+                # 试炼内继续以进门节点为当前节点
+                self.active_run.current_index = entry_index
+                # 本体区域第一次出现时，纠正显示名
+                # （进门是入口大厅 / 前厅时，名字要在见到本体后才准）
+                if area_id == trial_body_id(trial_id) and display:
+                    entry.name = display
+                test_log.write(
+                    "RUN",
+                    "试炼内区域，并入进门节点",
+                    index=entry_index,
+                    name=entry.name,
+                    area=area,
+                    seconds=round(segment_seconds, 2),
+                )
+                return True
+
+        # 试炼的第一次进入 = 进门 → 交给调用方建节点，
+        # 建好后由 _resolve_pending_trial_entry 补上 index
+        self._pending_trial_entry = info.trial_id
+        self._active_trial = None
+        return False
+
+    def _resolve_pending_trial_entry(self) -> None:
+        """进门节点建好后，记下它在哪（后续试炼房间都并进来）。"""
+        if not self._pending_trial_entry or not self.active_run:
+            return
+        trial_id = self._pending_trial_entry
+        self._pending_trial_entry = None
+        index = self.active_run.current_index
+        if not 0 <= index < len(self.active_run.nodes):
+            return
+        node = self.active_run.nodes[index]
+        node.is_trial_entry = True
+        # 显示名统一规则（与离线解析一致，见 trial_node_name）
+        body_name = known_area_name(trial_body_id(trial_id))
+        canonical = trial_node_name(
+            trial_id, node.area_id, node.name, body_name
+        )
+        if canonical:
+            node.name = canonical
+        self._active_trial = (trial_id, index)
 
     def _is_recent_repeat(self, area: str, area_id: str = "") -> bool:
         """该区域是否刚跑过（回城 / 死亡折返 / 反复进出），避免污染自由节点。
