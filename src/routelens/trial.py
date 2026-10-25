@@ -17,34 +17,32 @@ PoE1 —— 升华试炼（Labyrinth）：
     房间   ``<act>_Labyrinth_*``        （Estate Path / Aspirant's Trial / …）
             含 boss 房 ``*_Labyrinth_boss_*``
 
-PoE2 —— 三个试炼：
+PoE2 —— 两个试炼：
 
     ==========  ====================  ==================  ==================
     试炼           进门 / hub            本体（显示名）        内部房间
     ==========  ====================  ==================  ==================
     絲克瑪試煉     ``G2_13``             ``G2_13``            ``Sanctum_*``
     混沌試煉       ``G3_10_Airlock``     ``G3_10``            ``G3_10_Airlock``
-    祖靈的試煉     ``G4_4_1``            ``G4_4_3``            ``G4_4_2``
     ==========  ====================  ==================  ==================
 
     * 混沌試煉：玩家先到「混沌神殿」入口大厅（``G3_10_Airlock``），
       再进「混沌試煉」本体（``G3_10``），二者来回切换。
-    * 祖靈的試煉：玩家先入「悉妮蔻拉之眼」（``G4_4_1``），
-      穿「亡者之殿」（``G4_4_2``）到「祖靈的試煉」（``G4_4_3``）本体。
+
+**不是试炼**（剧情区域，别误折叠）：
+
+    * ``G4_4_3`` 「祖靈的試煉」= Act 4 剧情区域（Trial of the Ancestors），
+      在 Kingsmarch 一带，与「悉妮蔻拉之眼」「亡者之殿」相邻。
+      名字里带「試煉」但**不是**试炼内容，必须按普通剧情节点记录。
 
 **显示名统一取「本体」id 在日志里的区域名**
-（絲克瑪試煉 / 混沌試煉 / 祖靈的試煉 / Aspirants' Plaza）。
+（絲克瑪試煉 / 混沌試煉 / Aspirants' Plaza）。
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-
-# ── 试炼片段的最大「短暂离开」容忍（秒） ───────────────────────
-# 玩家在试炼中途回主城/藏身处晃一下又回来，算同一次试炼；
-# 超过这个间隔说明试炼已经结束，下一次进门是**另一次**试炼。
-TRIAL_IDLE_GAP_SEC = 60.0
 
 
 @dataclass(frozen=True)
@@ -56,8 +54,6 @@ class TrialSpec:
     entry_ids: frozenset[str]
     # 内部房间 id 前缀
     room_prefixes: tuple[str, ...]
-    # 内部房间的精确 id
-    room_ids: frozenset[str]
     # 本体 id —— 折叠后用它的区域名做显示名
     body_id: str
 
@@ -67,34 +63,24 @@ POE1_TRIAL = TrialSpec(
     trial_id="poe1_labyrinth",
     entry_ids=frozenset({"Labyrinth_Airlock"}),
     room_prefixes=(),
-    room_ids=frozenset(),
     body_id="Labyrinth_Airlock",
 )
 # 内部房间：1_Labyrinth_OH_straight / 2_Labyrinth_boss_1 / 3_Labyrinth_…
 POE1_TRIAL_ROOM_RE = re.compile(r"^\d+_Labyrinth_")
 
-# ── PoE2：三个试炼 ─────────────────────────────────────────────
+# ── PoE2：两个试炼 ─────────────────────────────────────────────
 POE2_TRIALS: tuple[TrialSpec, ...] = (
     TrialSpec(
         trial_id="G2_13",
         entry_ids=frozenset({"G2_13"}),
         room_prefixes=("Sanctum",),
-        room_ids=frozenset(),
         body_id="G2_13",
     ),
     TrialSpec(
         trial_id="G3_10",
         entry_ids=frozenset({"G3_10", "G3_10_Airlock"}),
         room_prefixes=("G3_10_Airlock",),
-        room_ids=frozenset(),
         body_id="G3_10",
-    ),
-    TrialSpec(
-        trial_id="G4_4_3",
-        entry_ids=frozenset({"G4_4_3", "G4_4_1", "G4_4_2"}),
-        room_prefixes=(),
-        room_ids=frozenset(),
-        body_id="G4_4_3",
     ),
 )
 
@@ -136,7 +122,6 @@ TRIAL_DISPLAY_NAMES: dict[str, str] = {
     "poe1_labyrinth": "升华试炼",
     "G2_13": "絲克瑪試煉",
     "G3_10": "混沌試煉",
-    "G4_4_3": "祖靈的試煉",
 }
 
 # trial_id → 本体 area id
@@ -146,7 +131,7 @@ _TRIAL_BODY_IDS: dict[str, str] = {
 
 
 def trial_body_id(trial_id: str) -> str:
-    """试炼本体的 area id（例：G4_4_3）。"""
+    """试炼本体的 area id（例：G2_13）。"""
     return _TRIAL_BODY_IDS.get(trial_id, "")
 
 
@@ -171,8 +156,8 @@ def trial_node_name(
     规则：
     - 进门就是本体（PoE1 迷宫 / PoE2 絲克瑪）→ 用日志里的区域名
       （Aspirants' Plaza / 絲克瑪試煉），跟客户端语言一致
-    - 进门是入口大厅 / 前厅（混沌神殿 / 悉妮蔻拉之眼）→ 用**本体**的名字
-      （混沌試煉 / 祖靈的試煉），因为「进门」不是试炼本身
+    - 进门是入口大厅（混沌神殿）→ 用**本体**的名字（混沌試煉），
+      因为「进门」不是试炼本身
     - 本体名字未知时用规范名兜底
     """
     body_id = trial_body_id(trial_id)

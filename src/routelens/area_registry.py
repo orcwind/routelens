@@ -6,7 +6,7 @@ from .games.base import GameProfile
 
 
 # area id → 区域名（进程内累积，跨会话）。
-# 用途：试炼本体的显示名（例：祖靈的試煉 = G4_4_3）可能在别的时刻才出现，
+# 用途：试炼本体的显示名（例：混沌試煉 = G3_10）可能在别的时刻才出现，
 # 本次没访问到本体 id 时也能取到正确名字。
 _AREA_NAMES: dict[str, str] = {}
 

@@ -9,7 +9,10 @@
 - PoE1 进门 = ``Labyrinth_Airlock``，房间 = ``<act>_Labyrinth_*``
 - PoE2 絲克瑪 = ``G2_13`` + ``Sanctum_*``
 - PoE2 混沌 = ``G3_10_Airlock``（入口大厅）↔ ``G3_10``（本体）
-- PoE2 祖靈 = ``G4_4_1`` / ``G4_4_2`` → ``G4_4_3``（本体）
+
+**不是试炼**（用户 2026-10-25 澄清）：
+- ``G4_4_3``「祖靈的試煉」= Act 4 剧情区域（Trial of the Ancestors），
+  名字带「試煉」但不是试炼 → 必须按普通剧情节点记录。
 """
 from __future__ import annotations
 
@@ -66,15 +69,12 @@ class TrialDetectionTests(unittest.TestCase):
         for area_id in ("1_3_town", "2_6_7_1", "MapWorldsCells"):
             self.assertFalse(detect_trial(area_id, "poe1").in_trial, area_id)
 
-    def test_poe2_three_trials(self) -> None:
+    def test_poe2_two_trials(self) -> None:
         cases = {
             "G2_13": "G2_13",
             "Sanctum_1_Foyer_1": "G2_13",
             "G3_10": "G3_10",
             "G3_10_Airlock": "G3_10",
-            "G4_4_3": "G4_4_3",
-            "G4_4_1": "G4_4_3",
-            "G4_4_2": "G4_4_3",
         }
         for area_id, trial_id in cases.items():
             info = detect_trial(area_id, "poe2")
@@ -83,6 +83,14 @@ class TrialDetectionTests(unittest.TestCase):
 
     def test_poe2_normal_area_not_trial(self) -> None:
         for area_id in ("G1_town", "G2_13_x", "MapNecropolis", "G4_7"):
+            self.assertFalse(detect_trial(area_id, "poe2").in_trial, area_id)
+
+    def test_ancestral_trial_is_story_area_not_trial(self) -> None:
+        """「祖靈的試煉」= Act 4 剧情区域（Trial of the Ancestors），**不是**试炼。
+
+        名字里带「試煉」很容易误判成试炼，必须按普通剧情节点记录。
+        """
+        for area_id in ("G4_4_3", "G4_4_1", "G4_4_2"):
             self.assertFalse(detect_trial(area_id, "poe2").in_trial, area_id)
 
 
@@ -219,7 +227,8 @@ class PoE2TrialFoldTests(unittest.TestCase):
         self.assertEqual(trial_nodes[0].segment_seconds, 13 + 360 + 28 + 341 + 8)
         self.assertEqual(trial_nodes[1].segment_seconds, 18 + 219)
 
-    def test_ancestral_trial_body_name(self) -> None:
+    def test_ancestral_trial_stays_normal_story_nodes(self) -> None:
+        """「祖靈的試煉」是 Act 4 剧情区域 → 必须按普通剧情节点逐个记录。"""
         # 实测真实形态（2026-07-06 20:37~20:58）：悉妮蔻拉之眼 → 亡者之殿 → 祖靈的試煉
         session = _session_timed(
             "poe2",
@@ -232,11 +241,13 @@ class PoE2TrialFoldTests(unittest.TestCase):
             ],
         )
         nodes = session.build_splits()
-        trial_nodes = [n for n in nodes if n.is_trial_entry]
-        self.assertEqual(len(trial_nodes), 1)
-        # 显示名取本体（祖靈的試煉），不是进门（悉妮蔻拉之眼）
-        self.assertEqual(trial_nodes[0].area, "祖靈的試煉")
-        self.assertEqual(trial_nodes[0].segment_seconds, 100 + 200 + 300 + 64)
+        # 没有试炼节点
+        self.assertEqual([n for n in nodes if n.is_trial_entry], [])
+        # 剧情区域逐个保留（原始区域名，不被改写）
+        names = [n.area for n in nodes]
+        self.assertIn("悉妮蔻拉之眼", names)
+        self.assertIn("亡者之殿", names)
+        self.assertIn("祖靈的試煉", names)
 
 
 if __name__ == "__main__":
