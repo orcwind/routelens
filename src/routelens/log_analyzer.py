@@ -8,9 +8,9 @@ from pathlib import Path
 from .area_registry import AreaRegistry
 from .games.base import GameProfile
 from .games.registry import get_game
+from .log_parser import CLIENT_ID_RE, FOREIGN_CLIENT_IDS, GENERATING_AREA_RE, SCENE_RE
 
 TIMESTAMP_RE = re.compile(r"^([0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})")
-SCENE_RE = re.compile(r"\[SCENE\] Set Source \[(.+?)\]")
 LOADING_RE = re.compile(r"\[LOADING SCREEN\] \((.+?)\)")
 ENTERED_RE = re.compile(r": You have entered (.+)\.?")
 ENTERED_CN_TW_RE = re.compile(r"[:：]\s*你(?:已經|已经)?進入\s*(.+?)\s*。")
@@ -20,8 +20,7 @@ CHAR_EN_RE = re.compile(r": (.+?) \((.+?)\) is now level ([0-9]+)")
 DEATH_CN_RE = re.compile(r": (.+?) 被[殺杀][害死]了。")
 DEATH_EN_RE = re.compile(r": You have died ([0-9]+) times\.")
 COMPANION_AREA_RE = re.compile(r"\[COMPANION\] \[AREA\] (.+)$")
-# area id = 幕归属的唯一权威来源（PoE1: 1_5_6 / PoE2: G2_10_1）
-GENERATING_AREA_RE = re.compile(r"Generating level \d+ area \"([^\"]+)\"")
+# area id / client id 的常量统一在 log_parser 里定义（此处从那里导入）
 
 
 @dataclass
@@ -41,6 +40,8 @@ class SplitNode:
     segment_seconds: float
     arrived_at: datetime
     area_id: str = ""
+    # 重复进入同一地点时，并回首次出现节点的序号；None = 该节点独立保留
+    merged_into: int | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -87,20 +88,25 @@ class LogRunSession:
         area_registry: AreaRegistry | None = None,
         chapters_filter: set[str] | None = None,
     ) -> list[SplitNode]:
-        """进入下一区时，把停留时长写到上一区（刚离开的节点），与实时计时一致。"""
+        """进入下一区时，把停留时长写到上一区（刚离开的节点），与实时计时一致。
+
+        **去重规则**：同一地点（area id）只保留第一次出现的节点。
+        玩家从 Act 3 回到 Act 1、或在同一幕内两个地点来回跑，
+        重复进入的地点不再作为新节点出现。
+
+        但**停留时间不能丢**：重复进入的那段时间并回该地点的原节点，
+        这样「各节点用时之和」仍然等于实际总时长。
+
+        身份用 area id 而非区域名：PoE1 的 Act 5 与 Act 10 区域名几乎相同
+        （实测 200 个区域名中 34 个跨幕重名），按名字去重会把后半程整段吃掉。
+        """
         splits: list[SplitNode] = []
-        seen: set[str] = set()
         last_time: datetime | None = None
 
+        # ── 阶段 1：按进入顺序建节点，每段用时 = 离开该区到下次进入的间隔 ──
         for visit in self.visits:
             if chapters_filter is not None and visit.chapter not in chapters_filter:
                 continue
-            # 去重身份必须含 area_id：PoE1 的 Act 5/Act 10 区域名几乎相同，
-            # 只按区域名去重会把后半程整段吃掉。
-            identity = f"{visit.area}#{visit.area_id}" if visit.area_id else visit.area
-            if identity in seen:
-                continue
-            seen.add(identity)
             if splits and last_time is not None:
                 splits[-1].segment_seconds = max(
                     0.0, (visit.timestamp - last_time).total_seconds()
@@ -117,7 +123,26 @@ class LogRunSession:
                 )
             )
             last_time = visit.timestamp
-        return splits
+
+        # ── 阶段 2：同一地点只保留首次出现，其余时间并回原节点 ──
+        first_index_by_identity: dict[str, int] = {}
+        for index, split in enumerate(splits):
+            identity = self._split_identity(split)
+            if identity in first_index_by_identity:
+                original = splits[first_index_by_identity[identity]]
+                original.segment_seconds += split.segment_seconds
+                split.merged_into = original.index
+                continue
+            first_index_by_identity[identity] = index
+
+        return [s for s in splits if s.merged_into is None]
+
+    @staticmethod
+    def _split_identity(split: SplitNode) -> str:
+        """节点去重身份：有 area id 用 area id（唯一标识一个区域实例），否则用区域名。"""
+        if split.area_id:
+            return f"{split.area}#{split.area_id}"
+        return split.area
 
     def filtered_chapter_label(self, chapters_filter: set[str] | None = None) -> str:
         if chapters_filter:
@@ -322,8 +347,15 @@ def analyze_client_log(
     sessions: list[LogRunSession] = []
     current: LogRunSession | None = None
     current_chapter = ""
-    # 最近的 area id（Generating level ... area "X_Y"）→ 供幕归属判定使用
+    # 待消费的 area id（Generating level ... area "X_Y"）。
+    # 消费式配对：一次 Generating 只对应随后的**第一个**真实区域进入事件。
+    # 之前用「最近一次 Generating 覆盖」，导致回城时 area_id 串位
+    # （实测 The Twilight Strand 拿到了上一个区域的 1_4_3_3）。
     pending_area_id = ""
+    # 当前这批 Generating 的真实区域名是否已取过（一批只算一个区域）
+    scene_consumed = False
+    # 本行所属的 client 进程号：99999 等非主进程会写入与玩家无关的场景名
+    line_client_id = ""
 
     for line in lines:
         if profile.log_open_marker in line:
@@ -331,6 +363,8 @@ def analyze_client_log(
             current = _start_new_session(sessions)
             current_chapter = ""
             pending_area_id = ""
+            scene_consumed = False
+            line_client_id = ""
             continue
 
         if line.startswith("#"):
@@ -339,9 +373,20 @@ def analyze_client_log(
         if current is None:
             continue
 
+        client_match = CLIENT_ID_RE.search(line)
+        if client_match:
+            line_client_id = client_match.group(1)
+
+        # 非游戏主进程（99999）：只写 [SCENE] Set Source，从不写 Generating /
+        # You have entered。这些场景名（幕間章 / 藏身處：殞落 …）与玩家无关，
+        # 直接整行忽略，否则会污染出「幕間章」这种节点。
+        if line_client_id in FOREIGN_CLIENT_IDS:
+            continue
+
         generating = GENERATING_AREA_RE.search(line)
         if generating:
             pending_area_id = generating.group(1).strip()
+            scene_consumed = False
 
         timestamp = parse_timestamp(line)
         if timestamp is None:
@@ -365,6 +410,16 @@ def analyze_client_log(
                 continue
             if raw_name in chapter_names:
                 continue
+            # 一批 Generating 只对应**一个**真实区域 = 该批第一个非 null 的 Set Source。
+            # 实测形态（PoE2）：
+            #   GEN:P2_1 | SCENE:(null) | SCENE:卡里交匯道 | SCENE:幕間章 | SCENE:(null) | ...
+            # 「幕間章」是章节过场 UI 场景，不是玩家进入的区域；
+            # 重复的 (null)/真名 也是同一批的回流。都不是新区域。
+            if not pending_area_id or scene_consumed:
+                continue
+            if raw_name in ("(null)", "(unknown)"):
+                continue
+            scene_consumed = True
 
         character_name = _extract_character_name(line)
         if character_name:
@@ -383,12 +438,17 @@ def analyze_client_log(
         if current.visits and current.visits[-1].area == area:
             continue
 
+        # 区域进入事件消费掉待配对的 area id（生成即消费，之后回城不再复用）
+        area_id = pending_area_id
+        pending_area_id = ""
+        scene_consumed = True
+
         current.visits.append(
             AreaVisit(
                 area=area,
                 timestamp=timestamp,
                 chapter=current_chapter,
-                area_id=pending_area_id,
+                area_id=area_id,
             )
         )
         if current.started_at is None:

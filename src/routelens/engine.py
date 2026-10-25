@@ -473,6 +473,17 @@ class RunEngine:
         )
         self._on_area_entered(event)
 
+    def _inject_area_with_id(self, area: str, area_id: str) -> None:
+        """模拟进图并带 area id（幕归属权威来源，同名不同实例要能区分）。"""
+        event = GameEvent(
+            type=EventType.AREA_ENTERED,
+            timestamp=datetime.now(),
+            area=area,
+            area_id=area_id,
+            raw_line=f"[SIMULATE] {area}",
+        )
+        self._on_area_entered(event)
+
     def next_expected_area(self) -> str:
         if not self.active_run:
             return ""
@@ -594,15 +605,25 @@ class RunEngine:
         display = self.display_name(area) or area
         has_reference = bool(self.active_run.reference_route_id)
 
+        # 回到已经去过的地点（从 Act 3 回 Act 1、同幕内来回跑）：
+        # 不新增节点，把停留时间并回原节点。
+        # 只在**自由记录**时生效 —— 有参考路线时由「向前匹配窗口」负责
+        # 回退识别（PoE1 的 Act 6 复用 Act 1 区域名，窗口规则已经处理过）。
+        if not has_reference or self._can_free_record():
+            revisited = self._find_revisited_node(area, area_id)
+            if revisited is not None and revisited != self.active_run.current_index:
+                self._close_current_node(segment_seconds)
+                return self._merge_into_revisited(revisited, segment_seconds)
+
         if self.active_run.nodes:
-            match_index = self._find_forward_match(area)
+            match_index = self._find_forward_match(area, area_id)
             if match_index is None:
                 # 参考路线已跑完：关闭最后一个参考节点，之后按实际进图自由记录。
                 # （参考只提供已跑节点的时间基准，节点名由实际进图生成）
-                if self._can_free_record() and not self._is_recent_repeat(area):
+                if self._can_free_record() and not self._is_recent_repeat(area, area_id):
                     self._close_current_node(segment_seconds)
                     return self._append_free_node(area, display, area_id)
-                if self._track_divergence(area, display, segment_seconds, timestamp):
+                if self._track_divergence(area, display, segment_seconds, timestamp, area_id):
                     return True
                 if has_reference:
                     test_log.write(
@@ -666,6 +687,7 @@ class RunEngine:
         display: str,
         segment_seconds: float,
         timestamp: datetime | None,
+        area_id: str = "",
     ) -> bool:
         """参考路线与实际路径分叉时，按实际进图继续记录。
 
@@ -675,7 +697,7 @@ class RunEngine:
         """
         assert self.active_run is not None
         now = timestamp or datetime.now()
-        if self._is_recent_repeat(area):
+        if self._is_recent_repeat(area, area_id):
             # 回城 / 死亡折返：不记录，也不累积「分叉」证据
             self._pending_areas = []
             return False
@@ -754,11 +776,61 @@ class RunEngine:
         )
         return True
 
-    def _is_recent_repeat(self, area: str) -> bool:
-        """该区域是否刚跑过（回城 / 死亡折返 / 反复进出），避免污染自由节点。"""
+    def _find_revisited_node(self, area: str, area_id: str) -> int | None:
+        """找「已经去过的同一地点」节点（玩家又回到了这个区域）。
+
+        身份优先用 area id（唯一标识一个区域实例）：
+        - 有 area id 时，只匹配 area id 相同的节点。
+          否则 PoE1 迷宫里三个同名 boss 实例
+          （1_Labyrinth_boss_1 / boss_2 / boss_2_end）会被错误合并成一个。
+        - 只有节点本身没有 area id 时，才退回按区域名匹配
+          （回城 / 无 id 的自由记录场景）。
+
+        只在**已跑过**的节点里找：玩家从 Act 3 回到 Act 1、或同一幕内来回跑，
+        都不该再产生新节点 —— 应该并回原节点继续计时。
+        """
+        if not self.active_run:
+            return None
+        if area_id:
+            for index, node in enumerate(self.active_run.nodes):
+                if node.area_id == area_id:
+                    return index
+            # 节点没有 area id（旧数据 / 手工建路线）→ 退回按名匹配
+            for index, node in enumerate(self.active_run.nodes):
+                if not node.area_id and self._areas_match(area, node.name):
+                    return index
+            return None
+        for index, node in enumerate(self.active_run.nodes):
+            if self._areas_match(area, node.name):
+                return index
+        return None
+
+    def _merge_into_revisited(self, index: int, segment_seconds: float) -> bool:
+        """回到已去过的地点：不新增节点，把停留时间并回原节点。"""
+        assert self.active_run is not None
+        node = self.active_run.nodes[index]
+        node.seconds = (node.seconds or 0.0) + segment_seconds
+        # 回到该地点 → 它成为当前节点，继续计时
+        self.active_run.current_index = index
+        test_log.write(
+            "RUN",
+            "回到已去过的地点，并回原节点",
+            index=index,
+            name=node.name,
+        )
+        return True
+
+    def _is_recent_repeat(self, area: str, area_id: str = "") -> bool:
+        """该区域是否刚跑过（回城 / 死亡折返 / 反复进出），避免污染自由节点。
+
+        有 area id 时按 id 判定：PoE1 迷宫里三个同名 boss 实例
+        （boss_1 / boss_2 / boss_2_end）不是同一个区域，不能互相屏蔽。
+        """
         if not self.active_run:
             return False
         recent = self.active_run.nodes[-REPEAT_NAME_MIN_GAP:]
+        if area_id:
+            return any(node.area_id == area_id for node in recent)
         return any(self._areas_match(area, node.name) for node in recent)
 
     def _manual_split(self) -> None:
@@ -775,13 +847,26 @@ class RunEngine:
                 self._persist()
                 self._emit_state()
 
-    def _find_forward_match(self, area: str) -> int | None:
+    @staticmethod
+    def _area_id_compatible(node: RunNode, area_id: str) -> bool:
+        """area id 兼容性：节点没记录 id 时不阻止匹配（老数据 / 手工路线）。
+
+        两边都有 id 时必须一致 —— 同名不同实例（PoE1 迷宫三个 boss）不能混为一谈。
+        """
+        if not area_id or not node.area_id:
+            return True
+        return node.area_id == area_id
+
+    def _find_forward_match(self, area: str, area_id: str = "") -> int | None:
         """仅在当前节点之后查找匹配（只认向前推进）。
 
         路线里同名区域出现多次时（PoE1 的 Act 6–10 复用 Act 1–5 区域名），
         只在一定窗口内匹配：否则 Act 1 死亡回城会命中 Act 6 的同名节点，
         把中间几十个节点全部标成「跳过」。
         名字唯一的区域保持原有行为（允许远距离跳段）。
+
+        ``area_id`` 已知时，候选节点的 area id 也必须一致 ——
+        否则 PoE1 迷宫里三个同名 boss 实例会被误判成同一个。
         """
         assert self.active_run is not None
         nodes = self.active_run.nodes
@@ -792,13 +877,13 @@ class RunEngine:
             node = nodes[index]
             if node.completed and not node.skipped:
                 continue
-            if self._areas_match(area, node.name):
+            if self._areas_match(area, node.name) and self._area_id_compatible(node, area_id):
                 return index
         for index in range(limit, len(nodes)):
             node = nodes[index]
             if node.completed and not node.skipped:
                 continue
-            if self._areas_match(area, node.name):
+            if self._areas_match(area, node.name) and self._area_id_compatible(node, area_id):
                 test_log.write(
                     "RUN",
                     "忽略进图（匹配点超出识别窗口）",

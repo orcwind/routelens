@@ -9,6 +9,13 @@ from .games.registry import get_game
 
 # area id = 幕归属的唯一权威来源（PoE1: 1_5_6 / PoE2: G2_10_1）
 GENERATING_AREA_RE = re.compile(r"Generating level \d+ area \"([^\"]+)\"")
+# 场景名（一批 Generating 里的第一个非 null 值 = 真实区域名）
+SCENE_RE = re.compile(r"\[SCENE\] Set Source \[(.+?)\]")
+# 日志里的 client 进程号：非游戏主进程（如 99999）会写入与玩家无关的场景名
+CLIENT_ID_RE = re.compile(r"\[(?:INFO|DEBUG|WARN|ERROR) Client (\d+)\]")
+# 非游戏主进程（实测 PoE1/PoE2 均存在 99999）：只写 [SCENE] Set Source，
+# 从不写 Generating level / You have entered —— 是「幕間章」等脏节点的来源。
+FOREIGN_CLIENT_IDS = frozenset({"99999"})
 
 
 def parse_timestamp(value: str) -> datetime:
@@ -19,7 +26,7 @@ def parse_line(
     line: str,
     game: GameProfile | None = None,
     *,
-    last_area_id: str = "",
+    area_id: str = "",
 ) -> GameEvent | None:
     profile = game or get_game(None)
     stripped = line.strip()
@@ -51,7 +58,7 @@ def parse_line(
                 timestamp=timestamp,
                 raw_line=stripped,
                 area=area,
-                area_id=last_area_id,
+                area_id=area_id,
             )
 
         if event_type == EventType.CHARACTER_LEVEL:

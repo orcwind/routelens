@@ -115,27 +115,42 @@ def _merge_splits(
     回城与重复读写都会塌成一个节点。
 
     ``keep_repeated_names=True``（PoE1）：Act 6–10 会复用 Act 1–5 的区域名，
-    必须保留远处再次出现的同名区域；只有距离很近的同名（回城折返）才算噪声。
+    必须保留**跨幕**再次出现的同名区域；同一幕内来回跑的同名要丢弃。
+
+    判据 = area id（唯一标识一个区域实例）：
+    同名但 area id 不同 → 不同区域（Act 5 的 The Ossuary vs Act 10 的）→ 保留；
+    area id 相同 → 同一个区域又去了一次 → 丢弃。
     """
     merged = [_split_to_user_format(item) if "elapsed" not in item else dict(item) for item in existing]
     seen = {_split_key(split) for split in merged if _split_key(split)}
     seen_areas = {_split_area(split) for split in merged if _split_area(split)}
     last_index_by_area: dict[str, int] = {}
+    seen_area_ids: set[str] = set()
     for index, split in enumerate(merged):
         area = _split_area(split)
         if area:
             last_index_by_area[area] = index
+        area_id = str(split.get("area_id") or "").strip()
+        if area_id:
+            seen_area_ids.add(area_id)
     for item in new:
         split = _split_to_user_format(item) if "elapsed" not in item else dict(item)
         key = _split_key(split)
         if not key or key in seen:
             continue
         area = _split_area(split)
+        area_id = str(split.get("area_id") or "").strip()
         if area:
             if keep_repeated_names:
-                previous = last_index_by_area.get(area)
-                if previous is not None and len(merged) - 1 - previous < REPEAT_NAME_MIN_GAP:
+                # area id 相同 = 同一个区域又去了一次（回城 / 来回跑）→ 丢弃
+                if area_id and area_id in seen_area_ids:
                     continue
+                # 同名但 area id 不同 = 不同区域（PoE1 Act 5 vs Act 10）→ 保留。
+                # area id 缺失时才退回「距离窗口」启发式。
+                if not area_id:
+                    previous = last_index_by_area.get(area)
+                    if previous is not None and len(merged) - 1 - previous < REPEAT_NAME_MIN_GAP:
+                        continue
             elif area in seen_areas:
                 continue
         seen.add(key)
@@ -143,6 +158,8 @@ def _merge_splits(
         if area:
             seen_areas.add(area)
             last_index_by_area[area] = len(merged) - 1
+        if area_id:
+            seen_area_ids.add(area_id)
     return merged
 
 
