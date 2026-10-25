@@ -569,6 +569,65 @@ class RouteLensSmokeTests(unittest.TestCase):
         self.assertEqual(expected_act_labels("poe1", "zh_tw")[0], "第 1 幕")
         self.assertEqual(expected_act_labels("poe2", "zh_tw")[3], "第 4 幕")
 
+    def test_version_visible_in_route_picker_and_settings(self) -> None:
+        """版本号必须在「选路线」页与「设置」页都可见（用户报 Bug 时要能直接报版本）。"""
+        from routelens.gui import RouteLensApp
+        from routelens.version import APP_DISPLAY, VERSION, VERSION_LABEL
+
+        app = RouteLensApp(root=shared_tk_root())
+        app.root.withdraw()
+        try:
+            # 窗口标题带版本
+            self.assertIn(VERSION, app.root.title())
+            self.assertIn(VERSION_LABEL, app.root.title())
+
+            # 选路线页
+            app._show_main()
+            app.root.update_idletasks()
+            self.assertIsNotNone(app._main_frame)
+            main_text = _collect_widget_text(app._main_frame)
+            self.assertIn(VERSION_LABEL, main_text)
+            self.assertIn(APP_DISPLAY, main_text)
+
+            # 设置页（独立 toplevel，单独校验，避免被主界面的版本号"顶过"）
+            before = set(app.root.winfo_children())
+            app._open_settings()
+            app.root.update_idletasks()
+            new_windows = [w for w in app.root.winfo_children() if w not in before]
+            self.assertTrue(new_windows, "设置窗口应作为新 toplevel 打开")
+            settings_win = new_windows[0]
+            self.assertIn(VERSION, settings_win.title())
+            settings_text = _collect_widget_text(settings_win)
+            self.assertIn(VERSION_LABEL, settings_text)
+            self.assertIn(APP_DISPLAY, settings_text)
+            settings_win.destroy()
+        finally:
+            app._stop_tray()
+            if app._global_hotkeys is not None:
+                app._global_hotkeys.shutdown()
+                app._global_hotkeys = None
+            app.root.update_idletasks()
+
+
+def _collect_widget_text(widget: tk.Misc) -> str:
+    """收集一棵 Tk 控件树里所有可见文本（用于断言界面显示了版本号）。"""
+    chunks: list[str] = []
+    stack: list[tk.Misc] = [widget]
+    while stack:
+        node = stack.pop()
+        try:
+            text = node.cget("text")
+        except (tk.TclError, ValueError):
+            text = ""
+        if text:
+            chunks.append(str(text))
+        try:
+            children = node.winfo_children()
+        except tk.TclError:
+            children = ()
+        stack.extend(children)
+    return "\n".join(chunks)
+
 
 if __name__ == "__main__":
     unittest.main()

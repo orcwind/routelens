@@ -29,7 +29,7 @@ from .theme import (
 )
 from .tray_icon import apply_window_icon
 from .ui_i18n import UI_LANG_EN, UI_LANG_ZH, t
-from .version import APP_DISPLAY
+from .version import APP_DISPLAY, APP_VERSION_LINE
 
 if TYPE_CHECKING:
     from .gui import RouteLensApp
@@ -116,7 +116,7 @@ class SetupWizard:
         self._button(self._t("lang_btn"), self._toggle_ui_lang, parent=row).pack(side=tk.RIGHT)
 
     def _refresh(self) -> None:
-        self.win.title(f"{APP_DISPLAY} - {self._t('setup_title')}")
+        self.win.title(f"{APP_VERSION_LINE} - {self._t('setup_title')}")
         if self._step == "found" and self._candidate is not None:
             self._show_found(self._candidate)
         else:

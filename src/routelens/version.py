@@ -1,9 +1,12 @@
 """轨镜版本与关于信息。"""
 
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 APP_NAME = "轨镜"
 APP_NAME_EN = "RouteLens"
 APP_DISPLAY = f"{APP_NAME} {APP_NAME_EN}"
+# 界面上到处显示的版本串（设置页 / 选路线页 / 标题栏）
+VERSION_LABEL = f"v{VERSION}"
+APP_VERSION_LINE = f"{APP_DISPLAY}  {VERSION_LABEL}"
 AUTHOR = "棱镜（poe2lens）"
 LICENSE = "MIT"
 GITHUB_URL = "https://github.com/orcwind/routelens"

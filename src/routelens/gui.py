@@ -73,7 +73,7 @@ from .theme import (
 from .split_panel import SplitPanel
 from .tray_icon import apply_window_icon, load_tray_image, load_window_icon_image
 from .ui_i18n import UI_LANG_EN, UI_LANG_ZH, t
-from .version import APP_DISPLAY, APP_NAME
+from .version import APP_DISPLAY, APP_NAME, APP_VERSION_LINE, VERSION_LABEL
 
 LIST_BG = SURFACE
 NODES_PER_PAGE = 50
@@ -111,7 +111,7 @@ class RouteLensApp:
         # （tcl_findLibrary 报错）。测试里注入同一个根即可避开。
         self.root = root if root is not None else ctk.CTk()
         self.ui_lang = load_ui_lang()
-        self.root.title(APP_DISPLAY)
+        self.root.title(APP_VERSION_LINE)
         self.root.geometry("920x520")
         self.root.minsize(640, 420)
         self.root.configure(fg_color=BG)
@@ -1342,6 +1342,13 @@ class RouteLensApp:
         ctk.CTkLabel(brand, text=self._t("app_name"), text_color=TEXT_FG, font=FONT_TITLE).pack(
             side=tk.LEFT
         )
+        # 版本号常驻可见（选路线页标题栏），方便用户报 Bug 时直接报版本
+        ctk.CTkLabel(
+            brand,
+            text=VERSION_LABEL,
+            text_color=GOLD_FG,
+            font=("Microsoft YaHei", 15, "bold"),
+        ).pack(side=tk.LEFT, padx=(10, 0))
         self._btn(header, self._t("settings"), self._open_settings, variant="ghost").pack(
             side=tk.RIGHT
         )
@@ -1461,6 +1468,15 @@ class RouteLensApp:
         self._btn(
             right, self._t("free_run"), self._on_free_run, variant="secondary", width=16
         ).pack(anchor="w", fill=tk.X, pady=(6, 0))
+
+        # 选路线页底部常驻版本号
+        ctk.CTkLabel(
+            right,
+            text=APP_VERSION_LINE,
+            text_color=MUTED_FG,
+            font=FONT_FOOT,
+            anchor="w",
+        ).pack(anchor="w", pady=(16, 0))
 
         self._refresh_route_list()
 
@@ -1843,6 +1859,12 @@ class RouteLensApp:
             text_color=MUTED_FG,
             font=FONT_TITLEBAR,
         ).pack(side=tk.LEFT, padx=(8, 0))
+        ctk.CTkLabel(
+            titlebar,
+            text=VERSION_LABEL,
+            text_color=MUTED_FG,
+            font=FONT_TITLEBAR,
+        ).pack(side=tk.LEFT, padx=(6, 0))
 
         def title_btn(text: str, command, *, width: int = 36) -> ctk.CTkLabel:
             lbl = ctk.CTkLabel(
@@ -2231,7 +2253,7 @@ class RouteLensApp:
     def _toggle_ui_lang(self) -> None:
         self.ui_lang = UI_LANG_EN if self.ui_lang == UI_LANG_ZH else UI_LANG_ZH
         save_ui_lang(self.ui_lang)
-        self.root.title(APP_DISPLAY)
+        self.root.title(APP_VERSION_LINE)
         # 主界面重建以刷新文案；Run 中则仅切语言，下次进入主界面生效
         if self._main_frame is not None:
             self._show_main()
@@ -2252,7 +2274,7 @@ class RouteLensApp:
     def _open_settings(self) -> None:
         win = ctk.CTkToplevel(self.root)
         self._apply_window_icon(win)
-        win.title(self._t("settings"))
+        win.title(f"{self._t('settings')} · {APP_DISPLAY} {VERSION_LABEL}")
         win.configure(fg_color=BG)
         win.transient(self.root)
         win.minsize(520, 360)
@@ -2261,6 +2283,24 @@ class RouteLensApp:
         shell = ctk.CTkFrame(win, fg_color=BG, corner_radius=0)
         shell.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         _canvas, frame = self._build_scrollable(shell)
+
+        # 版本号：设置页顶部常驻显示
+        version_block = ctk.CTkFrame(frame, fg_color=BG, corner_radius=0)
+        version_block.pack(fill=tk.X, pady=(0, 16))
+        ctk.CTkLabel(
+            version_block,
+            text=APP_DISPLAY,
+            text_color=TEXT_FG,
+            font=("Microsoft YaHei", 17, "bold"),
+            anchor="w",
+        ).pack(side=tk.LEFT)
+        ctk.CTkLabel(
+            version_block,
+            text=VERSION_LABEL,
+            text_color=GOLD_FG,
+            font=("Microsoft YaHei", 15, "bold"),
+            anchor="w",
+        ).pack(side=tk.LEFT, padx=(10, 0))
 
         # 自动更新
         update_block = ctk.CTkFrame(frame, fg_color=BG, corner_radius=0)
