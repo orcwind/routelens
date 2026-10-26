@@ -77,6 +77,18 @@ from .version import APP_DISPLAY, APP_NAME, APP_VERSION_LINE, VERSION_LABEL
 
 LIST_BG = SURFACE
 NODES_PER_PAGE = 50
+# 窗口拖动 / 数字热键绑定要跳过的控件：输入框、滚动条（拖动滚动条必须只滚列表，
+# 不能同时把整个无边框窗口拖走）等自带鼠标/键盘语义的控件。
+_INTERACTION_EXEMPT_CLASSES = {
+    "Entry",
+    "TEntry",
+    "Text",
+    "CTkEntry",
+    "CTkTextbox",
+    "Scrollbar",
+    "TScrollbar",
+    "CTkScrollbar",
+}
 GAME_GROUP_LABELS = {
     "poe1": "Path of Exile",
     "poe2": "Path of Exile 2",
@@ -292,12 +304,16 @@ class RouteLensApp:
 
         字号放大后整行可能放不下（窄窗 / 英文），这里按可用宽度自动折行。
         子控件一律用 place（Tk 不允许同一控件混用 pack/place）。
+
+        容器用原生 tk.Frame：CTkFrame.configure() 会重设自己的 <Configure> 绑定，
+        把这里的折行回调顶掉 → 窗口变窄后仍保持旧的一行坐标（Shift+S 被裁掉）。
         """
-        bar = ctk.CTkFrame(foot, fg_color=BG, corner_radius=0, height=22)
-        bar.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        bar = tk.Frame(foot, bg=BG, height=22, bd=0, highlightthickness=0)
+        bar.pack(side=tk.TOP, fill=tk.X)
         bar.pack_propagate(False)
         self._hotkey_hint_label = bar
         self._hotkey_bar_items = []
+        self._hotkey_bar_height = 0
         specs = (
             ("0", "hk_0"),
             ("2", "hk_2"),
@@ -310,49 +326,43 @@ class RouteLensApp:
         hover_fg = TEXT_FG
         normal_fg = MUTED_FG
         font = FONT_FOOT
+
+        def hint_label(parent: tk.Misc, text: str, color: str, *, clickable: bool) -> tk.Label:
+            """原生 tk.Label：CTkLabel.place 会按 DPI 缩放 x/y，与物理宽度比较必然错位。"""
+            return tk.Label(
+                parent,
+                text=text,
+                fg=color,
+                bg=BG,
+                font=font,
+                bd=0,
+                highlightthickness=0,
+                padx=0,
+                pady=0,
+                cursor="hand2" if clickable else "",
+            )
+
         for index, (digit, key) in enumerate(specs):
             if index:
-                sep = ctk.CTkLabel(
-                    bar,
-                    text="·",
-                    text_color=MUTED_FG,
-                    font=font,
-                )
+                sep = hint_label(bar, "·", MUTED_FG, clickable=False)
                 self._hotkey_bar_items.append((sep, 4))
-            lbl = ctk.CTkLabel(
-                bar,
-                text=self._t(key),
-                text_color=normal_fg,
-                font=font,
-                cursor="hand2",
-            )
+            lbl = hint_label(bar, self._t(key), normal_fg, clickable=True)
             self._hotkey_bar_items.append((lbl, 0))
 
             def _enter(_e, widget=lbl) -> None:
-                widget.configure(text_color=hover_fg)
+                widget.configure(fg=hover_fg)
 
             def _leave(_e, widget=lbl) -> None:
-                widget.configure(text_color=normal_fg)
+                widget.configure(fg=normal_fg)
 
             lbl.bind("<Enter>", _enter)
             lbl.bind("<Leave>", _leave)
             lbl.bind("<Button-1>", lambda _e, d=digit: self._invoke_hotkey_digit(d))
 
         # Shift+S 鼠标穿透：显示快捷键，可点击切换（穿透时点不到，靠全局热键）
-        sep = ctk.CTkLabel(
-            bar,
-            text="·",
-            text_color=MUTED_FG,
-            font=font,
-        )
+        sep = hint_label(bar, "·", MUTED_FG, clickable=False)
         self._hotkey_bar_items.append((sep, 4))
-        ct_lbl = ctk.CTkLabel(
-            bar,
-            text=f"Shift+S {self._t('click_through_off')}",
-            text_color=MUTED_FG,
-            font=font,
-            cursor="hand2",
-        )
+        ct_lbl = hint_label(bar, f"Shift+S {self._t('click_through_off')}", MUTED_FG, clickable=True)
         self._hotkey_bar_items.append((ct_lbl, 0))
         ct_lbl.bind("<Button-1>", lambda _e: self._toggle_click_through())
         self._click_through_label = ct_lbl
@@ -360,28 +370,63 @@ class RouteLensApp:
 
     def _on_hotkey_bar_resize(self, event: tk.Event | None = None) -> None:
         bar = self._hotkey_hint_label
-        if not isinstance(bar, ctk.CTkFrame):
+        if bar is None:
             return
-        width = event.width if event is not None else bar.winfo_width()
+        try:
+            width = event.width if event is not None else bar.winfo_width()
+        except (tk.TclError, AttributeError):
+            return
         self._relayout_hotkey_bar(bar, width)
 
-    def _relayout_hotkey_bar(self, bar: ctk.CTkFrame, width: int) -> None:
+    def _schedule_hotkey_relayout(self) -> None:
+        """窗口宽度变化后（或提示文案变化后）重排热键条，一次空闲内合并。"""
+        if not hasattr(self, "_hotkey_relayout_pending"):
+            self._hotkey_relayout_pending = False
+        if self._hotkey_relayout_pending:
+            return
+        bar = self._hotkey_hint_label
+        if bar is None:
+            return
+        self._hotkey_relayout_pending = True
+
+        def _run() -> None:
+            self._hotkey_relayout_pending = False
+            current = self._hotkey_hint_label
+            if current is None:
+                return
+            try:
+                if not current.winfo_exists():
+                    return
+                width = min(current.winfo_width(), self.root.winfo_width())
+            except tk.TclError:
+                return
+            self._relayout_hotkey_bar(current, width)
+
+        try:
+            self.root.after_idle(_run)
+        except tk.TclError:
+            self._hotkey_relayout_pending = False
+
+    def _relayout_hotkey_bar(self, bar: tk.Misc, width: int) -> None:
         """把热键项按可用宽度流式折行（place 定位，不参与父容器尺寸推导）。
 
-        width 是 bar 自身宽度 —— bar 以 expand=True 填充 foot 的剩余空间，
-        右侧「撤销重置 / 保存并关闭」已先 pack 占位，所以这里不会越界压住它们。
+        可用宽度取 min(bar 宽度, 窗口宽度)：bar 的请求宽度可能被内容撑得比窗口还宽，
+        只信 bar 自己会算出「放得下」，结果右端（Shift+S）被窗口裁掉。
         """
         items = self._hotkey_bar_items
         if not items or width <= 1:
             return
         try:
             bar.update_idletasks()
+            root_width = self.root.winfo_width()
         except tk.TclError:
             return
-        avail = width
+        avail = max(1, min(width, root_width))
         x = 0
         y = 0
         line_h = 0
+        placed: list[tuple[tk.Misc, int, int]] = []
+        line_start = True
         for widget, gap in items:
             try:
                 w = widget.winfo_reqwidth() + gap
@@ -392,12 +437,32 @@ class RouteLensApp:
                 y += line_h
                 x = 0
                 line_h = 0
-            try:
-                widget.place(x=x, y=y)
-            except tk.TclError:
+                line_start = True
+            is_sep = str(widget.cget("text")) == "·"
+            # 行首不摆分隔点（折行处会留下一个孤零零的「·」）
+            if line_start and is_sep:
                 continue
+            placed.append((widget, x, y))
+            line_start = False
             x += w
             line_h = max(line_h, h)
+
+        # 行尾的分隔点也藏起来（下一个按钮已经折到下一行）
+        hidden: set[tk.Misc] = set()
+        for idx, (widget, _px, py) in enumerate(placed):
+            if str(widget.cget("text")) != "·":
+                continue
+            if idx + 1 < len(placed) and placed[idx + 1][2] > py:
+                hidden.add(widget)
+
+        for widget, px, py in placed:
+            try:
+                if widget in hidden:
+                    widget.place_forget()
+                else:
+                    widget.place(x=px, y=py)
+            except tk.TclError:
+                continue
         total_h = y + line_h
         if total_h == self._hotkey_bar_height:
             return
@@ -510,9 +575,11 @@ class RouteLensApp:
             text = f"Shift+S {self._t('click_through_off')}"
             color = MUTED_FG
         try:
-            label.configure(text=text, text_color=color)
+            label.configure(text=text, fg=color)
         except tk.TclError:
             pass
+        # 文案长度变了（穿透开/关），折行可能变化
+        self._schedule_hotkey_relayout()
 
     # ---- Shift+S 系统级全局热键 ----
 
@@ -620,7 +687,7 @@ class RouteLensApp:
             return None
         widget = event.widget
         widget_class = str(widget.winfo_class())
-        if widget_class in {"Entry", "TEntry", "Text", "CTkEntry", "CTkTextbox"}:
+        if widget_class in _INTERACTION_EXEMPT_CLASSES:
             return None
         digit = self._key_to_hotkey_digit(event)
         if digit is None:
@@ -638,7 +705,7 @@ class RouteLensApp:
                 pass
         for child in widget.winfo_children():
             child_class = child.winfo_class()
-            if child_class in {"Entry", "TEntry", "Text", "CTkEntry", "CTkTextbox"}:
+            if child_class in _INTERACTION_EXEMPT_CLASSES:
                 continue
             self._install_run_hotkeys(child)
 
@@ -1267,6 +1334,9 @@ class RouteLensApp:
         self._clear_run_resize_grips()
 
     def _bind_run_drag(self, widget: tk.Misc) -> None:
+        # 滚动条自带拖拽语义，必须先于文本判断跳过，否则拖滚动条会拖整个窗口
+        if str(widget.winfo_class()) in _INTERACTION_EXEMPT_CLASSES:
+            return
         skip = {
             "极简",
             "Minimal",
@@ -1276,10 +1346,24 @@ class RouteLensApp:
             "❐",
             "保存并关闭",
             "Save & Close",
+            "存路线",
+            "Save route",
+            "返回",
             "返回路线选择",
+            "Back",
             "Back to Routes",
             "撤销重置",
             "Undo Reset",
+            "节点/幕",
+            "Node/Act",
+            "切到幕",
+            "切到节点",
+            "Act view",
+            "Node view",
+            "节点",
+            "Node",
+            "幕",
+            "Act",
         }
         try:
             text = str(widget.cget("text"))
@@ -1291,7 +1375,7 @@ class RouteLensApp:
         widget.bind("<B1-Motion>", self._drag_motion, add="+")
         for child in widget.winfo_children():
             child_class = str(child.winfo_class())
-            if child_class in {"Entry", "TEntry", "Text", "CTkEntry", "CTkTextbox"}:
+            if child_class in _INTERACTION_EXEMPT_CLASSES:
                 continue
             self._bind_run_drag(child)
 
@@ -1825,6 +1909,8 @@ class RouteLensApp:
             self._timer_label.configure(font=("Consolas", max(14, int(24 * scale)), "bold"))
         if self._total_delta_label is not None:
             self._total_delta_label.configure(font=("Consolas", max(12, int(18 * scale)), "bold"))
+        # 窗口变窄 → 热键条必须重排，否则 Shift+S 会被窗口右缘裁掉
+        self._schedule_hotkey_relayout()
     def _show_run(self) -> None:
         self._clear_container()
         if self._run_geometry_normal:
@@ -1849,7 +1935,7 @@ class RouteLensApp:
         self._run_frame = outer
         self._current_label = None
 
-        # 自定义顶栏：返回 / 极简 / 隐藏 / 最大化 / 关闭
+        # 自定义顶栏：只放窗名与「极简」；其余动作统一收进底栏动作行，不再上下各一半
         titlebar = ctk.CTkFrame(outer, fg_color="#1a1a1a", corner_radius=0, height=26)
         titlebar.pack_propagate(False)
         self._run_titlebar = titlebar
@@ -1859,14 +1945,10 @@ class RouteLensApp:
             text_color=MUTED_FG,
             font=FONT_TITLEBAR,
         ).pack(side=tk.LEFT, padx=(8, 0))
-        ctk.CTkLabel(
-            titlebar,
-            text=VERSION_LABEL,
-            text_color=MUTED_FG,
-            font=FONT_TITLEBAR,
-        ).pack(side=tk.LEFT, padx=(6, 0))
 
-        def title_btn(text: str, command, *, width: int = 36) -> ctk.CTkLabel:
+        def title_btn(
+            text: str, command, *, width: int = 36, side: str = tk.RIGHT
+        ) -> ctk.CTkLabel:
             lbl = ctk.CTkLabel(
                 titlebar,
                 text=text,
@@ -1875,20 +1957,16 @@ class RouteLensApp:
                 width=width,
                 cursor="hand2",
             )
-            lbl.pack(side=tk.RIGHT, padx=1, pady=1)
+            lbl.pack(side=side, padx=1, pady=1)
             lbl.bind("<Button-1>", lambda _e, c=command: c())
             return lbl
 
+        # 窗口控制固定在右上角（关窗 / 最小化只能靠它们，不挪到底栏）
         title_btn("×", self._on_close, width=28)
         self._run_max_btn = title_btn("□", self._run_toggle_maximize, width=28)
         title_btn("─", self._run_minimize, width=28)
-        title_btn(self._t("minimal"), self._enter_run_minimal, width=48)
-        # 节点/幕视图切换：放在标题栏，不挤节点列表
-        self._view_toggle_label = title_btn(
-            self._t("view_toggle"), self._toggle_act_view, width=64
-        )
-        # 返回放标题栏：不占底栏，也避免挤在节点列表中间
-        title_btn(self._t("back_short"), self._leave_run, width=40)
+        # 顶栏唯一的动作按钮：极简
+        title_btn(self._t("minimal"), self._enter_run_minimal, width=48, side=tk.LEFT)
 
         # 顶栏底部分隔线
         self._run_title_sep = tk.Frame(outer, bg=BORDER, height=1, bd=0, highlightthickness=0)
@@ -1902,36 +1980,66 @@ class RouteLensApp:
         foot = ctk.CTkFrame(panel, fg_color=BG, corner_radius=0)
         foot.pack(side=tk.BOTTOM, fill=tk.X, padx=2, pady=(0, 2))
         self._run_foot = foot
-        # 顺序要紧：右侧按钮先 pack，热键条最后 pack(expand=True) 吃剩余宽度；
-        # 反过来会被热键条挤掉，右侧「保存并关闭」被裁出窗口。
+
+        # 底栏统一成两行：
+        #   下行 = 动作行（左：返回 / 节点-幕；右：撤销重置 / 存路线 / 保存并关闭）
+        #   上行 = 快捷键提示（可点击，按宽度自动折行）
+        # 先 pack 下行（BOTTOM），再 pack 上行，避免动作按钮被提示条挤到窗口外。
+        action_row = ctk.CTkFrame(foot, fg_color=BG, corner_radius=0)
+        action_row.pack(side=tk.BOTTOM, fill=tk.X)
+        self._run_action_row = action_row
+
+        # 右侧主操作：从右往左依次 pack（保存并关闭最右）
         save_lbl = ctk.CTkLabel(
-            foot,
+            action_row,
             text=self._t("save_close"),
-            text_color=MUTED_FG,
+            text_color=TEXT_FG,
             font=FONT_FOOT,
             cursor="hand2",
         )
-        save_lbl.pack(side=tk.RIGHT, padx=2)
+        save_lbl.pack(side=tk.RIGHT, padx=(0, 2))
         save_lbl.bind("<Button-1>", lambda _e: self._save_and_close_run())
         self._save_route_label = ctk.CTkLabel(
-            foot,
+            action_row,
             text=self._t("save_as_route"),
             text_color=GOLD_FG,
             font=FONT_FOOT,
             cursor="hand2",
         )
-        self._save_route_label.pack(side=tk.RIGHT, padx=(0, 8))
+        self._save_route_label.pack(side=tk.RIGHT, padx=(0, 12))
         self._save_route_label.bind("<Button-1>", lambda _e: self._save_current_as_route())
         self._undo_reset_label = ctk.CTkLabel(
-            foot,
+            action_row,
             text=self._t("undo_reset"),
             text_color=GOLD_FG,
             font=FONT_FOOT,
             cursor="hand2",
         )
-        self._undo_reset_label.pack(side=tk.RIGHT, padx=(0, 6))
+        self._undo_reset_label.pack(side=tk.RIGHT, padx=(0, 12))
         self._undo_reset_label.bind("<Button-1>", lambda _e: self._undo_reset())
         self._update_undo_reset_button()
+
+        # 左侧导航：返回 → 节点/幕（与右侧操作分组，不再散落在标题栏）
+        back_lbl = ctk.CTkLabel(
+            action_row,
+            text=self._t("back_short"),
+            text_color=MUTED_FG,
+            font=FONT_FOOT,
+            cursor="hand2",
+        )
+        back_lbl.pack(side=tk.LEFT, padx=(2, 14))
+        back_lbl.bind("<Button-1>", lambda _e: self._leave_run())
+        self._view_toggle_label = ctk.CTkLabel(
+            action_row,
+            text=self._t("view_toggle"),
+            text_color=MUTED_FG,
+            font=FONT_FOOT,
+            cursor="hand2",
+        )
+        self._view_toggle_label.pack(side=tk.LEFT)
+        self._view_toggle_label.bind("<Button-1>", lambda _e: self._toggle_act_view())
+        self._update_view_toggle_label()
+
         self._build_clickable_hotkey_bar(foot)
 
         timer_row = ctk.CTkFrame(panel, fg_color=BG, corner_radius=0)
@@ -2804,7 +2912,7 @@ class RouteLensApp:
     def _update_view_toggle_label(self) -> None:
         if self._view_toggle_label is None:
             return
-        text = self._t("view_act") if self._act_view else self._t("view_node")
+        text = self._t("view_switch_node") if self._act_view else self._t("view_switch_act")
         try:
             self._view_toggle_label.configure(text=text)
         except tk.TclError:  # pragma: no cover - 控件已销毁

@@ -462,6 +462,68 @@ class RouteLensSmokeTests(unittest.TestCase):
         self.assertFalse(run.nodes[3].completed)
         self.assertEqual(run.current_index, 3)
 
+    def test_scrollbar_is_not_bound_to_window_drag(self) -> None:
+        """拖节点列表右侧滚动条必须只滚列表，不能把整个窗口拖走。"""
+        from routelens.gui import RouteLensApp, _INTERACTION_EXEMPT_CLASSES
+
+        app = RouteLensApp(root=shared_tk_root())
+        app.root.withdraw()
+        try:
+            # 全局热键线程与测试进程的 Tk 主循环不兼容（Win32 access violation），这里只验布局绑定
+            app._register_global_hotkeys = lambda: None
+            app._show_run()
+            app.root.update_idletasks()
+            vbar = app._run_vbar
+            self.assertIsNotNone(vbar)
+            self.assertIn(str(vbar.winfo_class()), _INTERACTION_EXEMPT_CLASSES)
+            self.assertEqual(vbar.bind("<ButtonPress-1>"), "")
+            self.assertEqual(vbar.bind("<B1-Motion>"), "")
+            # 非滚动条区域仍保留窗口拖动（无边框窗口靠它移动）
+            self.assertNotEqual(app._run_list_body.bind("<B1-Motion>"), "")
+        finally:
+            app._stop_tray()
+            if app._global_hotkeys is not None:
+                app._global_hotkeys.shutdown()
+                app._global_hotkeys = None
+            app.root.update_idletasks()
+
+    def test_hotkey_bar_wraps_inside_narrow_window(self) -> None:
+        """窄窗必须折行：任何提示项都不能超出提示条/窗口右缘（Shift+S 曾被裁掉）。"""
+        from routelens.gui import RouteLensApp
+
+        app = RouteLensApp(root=shared_tk_root())
+        try:
+            app._register_global_hotkeys = lambda: None
+            app._show_run()
+            app.root.deiconify()
+            app.root.update_idletasks()
+            for width in (320, 380, 440, 520):
+                app.root.geometry(f"{width}x520+40+40")
+                for _ in range(3):
+                    app.root.update()
+                bar = app._hotkey_hint_label
+                self.assertIsNotNone(bar)
+                bar_w = bar.winfo_width()
+                visible = [w for w, _g in app._hotkey_bar_items if w.place_info()]
+                self.assertTrue(visible)
+                for widget in visible:
+                    self.assertLessEqual(
+                        widget.winfo_x() + widget.winfo_width(),
+                        bar_w,
+                        msg=f"width={width} 超宽: {widget.cget('text')!r}",
+                    )
+                    self.assertLessEqual(
+                        widget.winfo_y() + widget.winfo_height(),
+                        bar.winfo_height(),
+                        msg=f"width={width} 超出高度: {widget.cget('text')!r}",
+                    )
+        finally:
+            app._stop_tray()
+            if app._global_hotkeys is not None:
+                app._global_hotkeys.shutdown()
+                app._global_hotkeys = None
+            app.root.update_idletasks()
+
     def test_hotkey_digit_mapping(self) -> None:
         from routelens.gui import RouteLensApp, _NUMPAD_KEYCODE_TO_DIGIT
 
