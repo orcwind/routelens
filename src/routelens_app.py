@@ -21,6 +21,11 @@ def main() -> None:
         if not single_instance.signal_existing_instance():
             single_instance.activate_window_fallback()
         return
+    # 老版本实例（没有互斥体）可能还缩在托盘里占着 Shift+S：这里同样拒绝再开一份
+    running = single_instance.find_other_instance_window()
+    if running:
+        single_instance.show_window(running)
+        return
     activation_event = single_instance.create_activation_event()
     app = RouteLensApp()
     if not app.run_startup():

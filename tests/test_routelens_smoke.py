@@ -41,6 +41,29 @@ def tearDownModule() -> None:
         _SHARED_TK_ROOT = None
 
 
+def dispose_app(app) -> None:
+    """销毁一个测试用 RouteLensApp 的根容器。
+
+    共享根上每 new 一个 App 都会 pack 一个新 container；不销毁的话后续 App 的
+    container 会分不到高度（winfo_width=1），布局断言全部假失败。
+    """
+    app._stop_tray()
+    if app._global_hotkeys is not None:
+        try:
+            app._global_hotkeys.shutdown()
+        except Exception:  # noqa: BLE001 - 关线程失败不影响测试结论
+            pass
+        app._global_hotkeys = None
+    try:
+        app.container.destroy()
+    except tk.TclError:
+        pass
+    try:
+        app.root.update_idletasks()
+    except tk.TclError:
+        pass
+
+
 class RouteLensSmokeTests(unittest.TestCase):
     def test_format_helpers(self) -> None:
         self.assertEqual(format_duration(125), "02:05")
@@ -481,11 +504,7 @@ class RouteLensSmokeTests(unittest.TestCase):
             # 非滚动条区域仍保留窗口拖动（无边框窗口靠它移动）
             self.assertNotEqual(app._run_list_body.bind("<B1-Motion>"), "")
         finally:
-            app._stop_tray()
-            if app._global_hotkeys is not None:
-                app._global_hotkeys.shutdown()
-                app._global_hotkeys = None
-            app.root.update_idletasks()
+            dispose_app(app)
 
     def test_hotkey_bar_wraps_inside_narrow_window(self) -> None:
         """窄窗必须折行：任何提示项都不能超出提示条/窗口右缘（Shift+S 曾被裁掉）。"""
@@ -527,11 +546,75 @@ class RouteLensSmokeTests(unittest.TestCase):
                         msg=f"width={width} 超出高度: {widget.cget('text')!r}",
                     )
         finally:
-            app._stop_tray()
-            if app._global_hotkeys is not None:
-                app._global_hotkeys.shutdown()
-                app._global_hotkeys = None
-            app.root.update_idletasks()
+            dispose_app(app)
+
+    def test_blank_route_entries_cover_poe1_and_poe2(self) -> None:
+        """空白路线必须两个：一个 PoE1、一个 PoE2（各走各的游戏判定）。"""
+        from routelens.gui import BLANK_ROUTE_ENTRIES
+        from routelens.ui_i18n import STRINGS
+
+        games = [game for game, _key in BLANK_ROUTE_ENTRIES]
+        self.assertEqual(games, ["poe1", "poe2"])
+        for _game, key in BLANK_ROUTE_ENTRIES:
+            for lang, table in STRINGS.items():
+                self.assertIn(key, table, msg=f"{lang} 缺 {key}")
+
+    def test_free_run_switches_game_profile(self) -> None:
+        """点「空白路线 · PoE1/2」必须把当前游戏切过去，否则整轮按错游戏判幕。"""
+        import tempfile
+        from dataclasses import replace
+        from unittest import mock
+
+        from routelens.gui import RouteLensApp
+
+        app = RouteLensApp(root=shared_tk_root())
+        app.root.withdraw()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                client = Path(tmp) / "Client.txt"
+                client.write_text("", encoding="utf-8")
+                app.config = replace(app.config, game="poe2")
+                with mock.patch(
+                    "routelens.gui.load_client_path_for_game", return_value=str(client)
+                ), mock.patch("routelens.gui.save_routelens_setup") as save, mock.patch(
+                    "routelens.gui.load_routelens_config",
+                    return_value=replace(app.config, game="poe1"),
+                ), mock.patch.object(app.engine, "stop_watching") as stop, mock.patch.object(
+                    app.engine, "reload_game_profile"
+                ):
+                    self.assertTrue(app._switch_run_game("poe1"))
+                save.assert_called_once_with(str(client), "poe1")
+                stop.assert_called_once()
+                self.assertEqual(app.config.game, "poe1")
+            # 已经是目标游戏时不重复写配置
+            app.config = replace(app.config, game="poe2")
+            with mock.patch("routelens.gui.save_routelens_setup") as save:
+                self.assertTrue(app._switch_run_game("poe2"))
+            save.assert_not_called()
+        finally:
+            dispose_app(app)
+
+    def test_free_run_refuses_when_game_client_missing(self) -> None:
+        """另一个游戏没有 Client.txt 时必须明确拒绝，不能拿错游戏的日志开跑。"""
+        from dataclasses import replace
+        from unittest import mock
+
+        from routelens.gui import RouteLensApp
+
+        app = RouteLensApp(root=shared_tk_root())
+        app.root.withdraw()
+        try:
+            app.config = replace(app.config, game="poe2", client_txt_path=None)
+            with mock.patch(
+                "routelens.gui.load_client_path_for_game", return_value=None
+            ), mock.patch("routelens.gui.messagebox.showinfo") as info, mock.patch(
+                "routelens.gui.save_routelens_setup"
+            ) as save:
+                self.assertFalse(app._switch_run_game("poe1"))
+            info.assert_called_once()
+            save.assert_not_called()
+        finally:
+            dispose_app(app)
 
     def test_click_through_hint_text_reports_hotkey_conflict(self) -> None:
         """全局热键注册失败（1409 被占用）必须如实提示，而不是静默失效。"""
@@ -569,11 +652,7 @@ class RouteLensSmokeTests(unittest.TestCase):
             self.assertEqual(app._key_to_hotkey_digit(event), "0")
             self.assertEqual(_NUMPAD_KEYCODE_TO_DIGIT.get(98), "2")
         finally:
-            app._stop_tray()
-            if app._global_hotkeys is not None:
-                app._global_hotkeys.shutdown()
-                app._global_hotkeys = None
-            app.root.update_idletasks()
+            dispose_app(app)
 
     def test_truncate_poe1_at_karui_shores(self) -> None:
         from routelens.campaign_end import truncate_at_campaign_end
@@ -694,11 +773,7 @@ class RouteLensSmokeTests(unittest.TestCase):
             self.assertEqual(rows[4]["time"], "01:00")
             self.assertEqual(rows[-1]["time"], "00:10")
         finally:
-            app._stop_tray()
-            if app._global_hotkeys is not None:
-                app._global_hotkeys.shutdown()
-                app._global_hotkeys = None
-            app.root.update_idletasks()
+            dispose_app(app)
 
     def test_expected_act_labels(self) -> None:
         from routelens.act_timing import expected_act_labels
@@ -742,11 +817,7 @@ class RouteLensSmokeTests(unittest.TestCase):
             self.assertIn(APP_DISPLAY, settings_text)
             settings_win.destroy()
         finally:
-            app._stop_tray()
-            if app._global_hotkeys is not None:
-                app._global_hotkeys.shutdown()
-                app._global_hotkeys = None
-            app.root.update_idletasks()
+            dispose_app(app)
 
 
 def _collect_widget_text(widget: tk.Misc) -> str:

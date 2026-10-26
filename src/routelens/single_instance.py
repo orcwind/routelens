@@ -86,36 +86,80 @@ def signal_existing_instance() -> bool:
         kernel32.CloseHandle(handle)
 
 
-def activate_window_fallback() -> bool:
-    """老版本实例没有唤醒事件时的兜底：直接显示它的 Tk 顶层窗口。"""
+def _window_title(hwnd: int) -> str:
+    user32 = _user32()
+    length = user32.GetWindowTextLengthW(hwnd)
+    if length <= 0:
+        return ""
+    buf = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(hwnd, buf, length + 1)
+    return buf.value
+
+
+def _window_class(hwnd: int) -> str:
+    user32 = _user32()
+    buf = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(hwnd, buf, 256)
+    return buf.value
+
+
+def _enum_top_level_windows() -> list[int]:
     if not hasattr(ctypes, "windll"):
-        return False
+        return []
     user32 = _user32()
     found: list[int] = []
     enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
     def _visit(hwnd, _lparam) -> bool:
-        length = user32.GetWindowTextLengthW(hwnd)
-        if length <= 0:
-            return True
-        buf = ctypes.create_unicode_buffer(length + 1)
-        user32.GetWindowTextW(hwnd, buf, length + 1)
-        title = buf.value
-        if "RouteLens" not in title and "轨镜" not in title:
-            return True
-        cls = ctypes.create_unicode_buffer(256)
-        user32.GetClassNameW(hwnd, cls, 256)
-        if cls.value == "TkTopLevel":
-            found.append(int(hwnd))
+        found.append(int(hwnd))
         return True
 
     user32.EnumWindows(enum_proc(_visit), 0)
-    if not found:
+    return found
+
+
+def _is_our_window(title: str) -> bool:
+    return "RouteLens" in title or "轨镜" in title
+
+
+def find_other_instance_window() -> int:
+    """找**其它进程**已存在的轨镜主窗口（老版本没有互斥体时靠它兜住）。
+
+    返回 0 表示没有。只认 TkTopLevel + 我们的标题，避免误伤别的程序。
+    """
+    if not hasattr(ctypes, "windll"):
+        return 0
+    user32 = _user32()
+    self_pid = int(ctypes.windll.kernel32.GetCurrentProcessId())
+    for hwnd in _enum_top_level_windows():
+        if _window_class(hwnd) != "TkTopLevel":
+            continue
+        if not _is_our_window(_window_title(hwnd)):
+            continue
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if int(pid.value) == self_pid:
+            continue
+        return hwnd
+    return 0
+
+
+def show_window(hwnd: int) -> bool:
+    """把指定窗口恢复并置前。"""
+    if not hwnd or not hasattr(ctypes, "windll"):
         return False
-    hwnd = found[0]
+    user32 = _user32()
     user32.ShowWindow(hwnd, _SW_RESTORE if user32.IsIconic(hwnd) else _SW_SHOW)
     user32.SetForegroundWindow(hwnd)
     return True
+
+
+def activate_window_fallback() -> bool:
+    """老版本实例没有唤醒事件时的兜底：直接显示它的 Tk 顶层窗口。"""
+    hwnd = find_other_instance_window()
+    if not hwnd:
+        return False
+    return show_window(hwnd)
 
 
 def start_activation_watcher(event_handle: int, on_activate: Callable[[], None]) -> None:

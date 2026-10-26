@@ -90,8 +90,14 @@ _INTERACTION_EXEMPT_CLASSES = {
     "TScrollbar",
     "CTkScrollbar",
 }
-def click_through_hint_text(
-    *,
+# 空白路线：每个游戏各一颗按钮，游戏由用户点的那颗决定（不看设置里的当前游戏）
+BLANK_ROUTE_ENTRIES: tuple[tuple[str, str], ...] = (
+    ("poe1", "free_run_poe1"),
+    ("poe2", "free_run_poe2"),
+)
+
+
+def click_through_hint_text(    *,
     click_through: bool,
     hotkey_registered: bool,
     translate,
@@ -1596,9 +1602,15 @@ class RouteLensApp:
         self._btn(right, self._t("new_run"), self._on_new_run, variant="secondary", width=16).pack(
             anchor="w", fill=tk.X
         )
-        self._btn(
-            right, self._t("free_run"), self._on_free_run, variant="secondary", width=16
-        ).pack(anchor="w", fill=tk.X, pady=(6, 0))
+        # 空白路线分两个游戏：走哪条由用户点的那颗按钮决定，不看设置里的当前游戏
+        for game_id, key in BLANK_ROUTE_ENTRIES:
+            self._btn(
+                right,
+                self._t(key),
+                lambda g=game_id: self._on_free_run(g),
+                variant="secondary",
+                width=16,
+            ).pack(anchor="w", fill=tk.X, pady=(6, 0))
 
         # 选路线页底部常驻版本号
         ctk.CTkLabel(
@@ -1929,11 +1941,47 @@ class RouteLensApp:
         test_log.write("USER", "新 Run", route_id=route.route_id, route_name=route.name)
         self._show_run()
 
-    def _on_free_run(self) -> None:
-        """不选参考路线：节点名与时间全部按实际进图记录，用来生成新路线。"""
+    def _on_free_run(self, game_id: str = "") -> None:
+        """不选参考路线：节点名与时间全部按实际进图记录，用来生成新路线。
+
+        两个入口各自钉死游戏（PoE1 / PoE2）：点哪颗就按哪个游戏查区、判幕，
+        不依赖设置里的「当前游戏」，否则 PoE1 玩家点了 PoE2 空白路线就会整轮错判。
+        """
+        target = str(game_id or "").strip().lower()
+        if target in {"poe1", "poe2"} and not self._switch_run_game(target):
+            return
         self.engine.begin_new_run(None)
-        test_log.write("USER", "自由路线 Run")
+        test_log.write("USER", "自由路线 Run", game=target or self.config.game)
         self._show_run()
+
+    def _switch_run_game(self, game_id: str) -> bool:
+        """把「当前游戏」切到 game_id（含 Client.txt 路径）；缺 Client.txt 时明确拒绝。"""
+        from pathlib import Path
+
+        if str(self.config.game or "").strip().lower() == game_id:
+            return True
+        saved = load_client_path_for_game(game_id)
+        path = Path(saved) if saved else None
+        if path is None or not path.is_file():
+            # 不拿「当前游戏的 Client.txt」凑：PoE2 的日志按 PoE1 判幕会整轮错。
+            # 宁可让用户先去设置里选这条游戏的日志。
+            messagebox.showinfo(
+                self._t("need_client_for_game_title"),
+                self._t("need_client_for_game").format(game=self._game_title(game_id)),
+                parent=self.root,
+            )
+            return False
+        save_routelens_setup(str(path), game_id)
+        self.config = load_routelens_config()
+        self.engine.config = self.config
+        # 监听器绑的是「旧游戏的 Client.txt」：不先停掉，切游戏后会一直读错日志
+        self.engine.stop_watching()
+        self.engine.reload_game_profile()
+        return True
+
+    @staticmethod
+    def _game_title(game_id: str) -> str:
+        return "Path of Exile 2" if game_id == "poe2" else "Path of Exile"
 
     def _on_continue(self) -> None:
         route = self._route_by_id(self._selected_route_id)
