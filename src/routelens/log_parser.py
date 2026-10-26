@@ -49,6 +49,14 @@ def parse_line(
         timestamp = parse_timestamp(groups[0])
         payload = groups[1:]
 
+        if event_type == EventType.CAMPAIGN_END:
+            # 剧情结束（PoE1 Act 10 奇塔弗 -60% 永久削弱）
+            return GameEvent(
+                type=event_type,
+                timestamp=timestamp,
+                raw_line=stripped,
+            )
+
         if event_type == EventType.AREA_ENTERED:
             area = payload[0].strip().rstrip(".")
             if area in profile.skip_area_names or area in profile.chapter_names:

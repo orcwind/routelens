@@ -15,6 +15,11 @@ from .hideout_filter import is_hideout_area
 
 from .area_filter import filter_hideout_nodes
 from .area_registry import known_area_name
+from .campaign_start import (
+    campaign_start_area_id,
+    campaign_start_name,
+    resolve_area_name_from_log,
+)
 from .client_import import import_routes_from_client
 from .config import clear_client_path_for_other_games
 from .game_detect import detect_game_from_log, resolve_import_game
@@ -65,7 +70,10 @@ class RunEngine:
         self._active_trial: tuple[str, int] | None = None
         # 刚进入试炼、节点尚未建好时的标记（建好后补 index）
         self._pending_trial_entry: str | None = None
+        # 预置的第一幕起点是否已被玩家真正进入过（未被认领的预置节点不记时间）
+        self._seed_claimed = False
         self.event_bus.subscribe(EventType.AREA_ENTERED, self._on_area_entered)
+        self.event_bus.subscribe(EventType.CAMPAIGN_END, self._on_campaign_end)
 
     def set_state_callback(self, callback: StateCallback | None) -> None:
         self._state_callback = callback
@@ -122,6 +130,10 @@ class RunEngine:
                 RunNode(name=node.name, completed=False, area_id=node.area_id)
                 for node in filter_hideout_nodes(reference.nodes)
             ]
+        else:
+            # 自由路线（空白路线）：开荒必然从第一幕开始，第一幕起点是**固定**的。
+            # 预置 node 0，玩家一进图就能对上；否则首个区域永远缺失。
+            nodes = self._seed_campaign_start_nodes()
         run = ActiveRun(
             run_id=str(uuid.uuid4()),
             reference_route_id=reference.route_id if reference else None,
@@ -133,9 +145,29 @@ class RunEngine:
         self._timer_started_at = None
         self._last_area = ""
         self._pending_areas = []
+        self._seed_claimed = False
         self._persist()
         self._emit_state()
         return run
+
+    def _seed_campaign_start_nodes(self) -> list[RunNode]:
+        """新建（自由）路线：预置第一幕固定起点为 node 0。
+
+        开荒必然从第一幕开始，所以起点 area id 是常量（见 campaign_start.py）。
+        预置后：
+        - 玩家还没进图就有 node 0（极简模式能立刻显示计时）
+        - 玩家进第一幕起点时按 area id 匹配到 node 0，不会多出一行
+        """
+        area_id = campaign_start_area_id(self.config.game)
+        if not area_id:
+            return []
+        # 区域名随客户端语言变化：日志原文优先，取不到才用内置译名
+        name = (
+            known_area_name(area_id)
+            or resolve_area_name_from_log(self.client_path, area_id)
+            or campaign_start_name(area_id, self.config.locale)
+        )
+        return [RunNode(name=name, completed=False, area_id=area_id)]
 
     def resume_run(self, run: ActiveRun) -> ActiveRun:
         self.active_run = run
@@ -349,6 +381,9 @@ class RunEngine:
                 RunNode(name=node.name, completed=False)
                 for node in filter_hideout_nodes(reference.nodes)
             ]
+        else:
+            # 自由路线重置：同样回到第一幕固定起点
+            nodes = self._seed_campaign_start_nodes()
         self.active_run = ActiveRun(
             run_id=str(uuid.uuid4()),
             reference_route_id=route_id,
@@ -360,6 +395,7 @@ class RunEngine:
         self._timer_started_at = None
         self._last_area = ""
         self._pending_areas = []
+        self._seed_claimed = False
         self._persist()
         self._emit_state()
 
@@ -568,6 +604,11 @@ class RunEngine:
     def _on_area_entered(self, event: GameEvent) -> None:
         if not self.has_active_run:
             return
+        assert self.active_run is not None
+        if self.active_run.campaign_over:
+            # 剧情已结束：之后的区域（终局城镇 / 地图 / 藏身处）都不进开荒路线，
+            # 否则保存成路线时会带进一堆终局节点。
+            return
         area = event.area
         if not area or area == self._last_area:
             return
@@ -590,6 +631,33 @@ class RunEngine:
         self._persist()
         self._emit_state()
 
+    def _on_campaign_end(self, event: GameEvent) -> None:
+        """剧情结束（PoE1 Act 10 奇塔弗 -60% 永久削弱）：暂停计时。
+
+        出现这条系统提示时玩家刚打完剧情最终 Boss，开荒已经结束；
+        继续计时只会把终局内容（地图 / 藏身处）算进开荒时间。
+        """
+        if not self.has_active_run:
+            return
+        assert self.active_run is not None
+        if self.active_run.campaign_over:
+            return
+
+        # 先在当前时刻收尾：把已经跑完的段算进去，再冻结总时间
+        self._sync_elapsed()
+        if not self.active_run.is_paused:
+            self.active_run.is_paused = True
+        self._timer_started_at = None
+        self.active_run.campaign_over = True
+        test_log.write(
+            "RUN",
+            "剧情结束，暂停计时",
+            raw_line=event.raw_line[:160],
+            elapsed=round(self.active_run.elapsed_seconds, 2),
+        )
+        self._persist()
+        self._emit_state()
+
     def _sync_current_area_display(self) -> None:
         assert self.active_run is not None
         if self.active_run.current_index < len(self.active_run.nodes):
@@ -604,6 +672,26 @@ class RunEngine:
         )
         return max(0.0, self.elapsed_seconds() - completed_sum)
 
+    def _correct_seeded_node_name(self, area: str, area_id: str) -> None:
+        """预置的第一幕起点节点：按日志原文校正显示名。
+
+        预置时只能拿到回退译名（客户端语言未知），玩家真正进图后日志里
+        才有原文，用原文覆盖，保证界面显示与游戏一致。
+        """
+        if not self.active_run or not area_id:
+            return
+        seed_id = campaign_start_area_id(self.config.game)
+        for node in self.active_run.nodes:
+            if node.area_id == area_id and node.area_id == seed_id:
+                # 玩家真正进了第一幕起点 → 预置节点已被认领
+                self._seed_claimed = True
+                if node.name != area:
+                    node.name = area
+                return
+            if node.area_id == area_id and node.name != area:
+                node.name = area
+                return
+
     def _record_node(
         self,
         area: str,
@@ -614,6 +702,8 @@ class RunEngine:
         assert self.active_run is not None
         display = self.display_name(area) or area
         has_reference = bool(self.active_run.reference_route_id)
+        # 预置的第一幕起点：名字可能是回退译名，玩家真进图后按日志原文校正
+        self._correct_seeded_node_name(area, area_id)
 
         # 试炼折叠：一次试炼只记进门那一次，试炼里的房间不单独记录。
         # 玩家在试炼内来回（混沌神殿 ↔ 混沌試煉）也算同一次试炼。
@@ -777,9 +867,33 @@ class RunEngine:
         node = self.active_run.nodes[index]
         if node.completed:
             return
+        if self._is_unvisited_seed(node):
+            # 预置的第一幕起点玩家根本没进过（新建路线时人已经在别的幕）：
+            # 标记跳过，不能记一段假时间。
+            node.completed = True
+            node.skipped = True
+            node.seconds = None
+            return
         node.seconds = segment_seconds
         node.completed = True
         node.skipped = False
+
+    def _is_unvisited_seed(self, node: RunNode) -> bool:
+        """该节点是否是「预置但玩家从未真正进过」的第一幕起点。
+
+        判定：预置起点 area id 与节点一致，且节点还没有任何时间记录。
+        玩家一旦进过该区域，``_correct_seeded_node_name`` 会把名字改成日志原文，
+        这里用「名字仍是预置译名/空」来判断是否被认领过。
+        """
+        if not self.active_run:
+            return False
+        seed_id = campaign_start_area_id(self.config.game)
+        if not seed_id or node.area_id != seed_id:
+            return False
+        if self._seed_claimed:
+            return False
+        # 玩家已进过该区域（名字被改成日志原文 / 节点已有时间）
+        return node.seconds is None and not node.completed
 
     def _append_free_node(self, area: str, display: str, area_id: str = "") -> bool:
         """把实际进入的区域追加为当前节点，并开始为它计时。"""
@@ -951,6 +1065,19 @@ class RunEngine:
             return True
         return node.area_id == area_id
 
+    def _node_matches(self, node: RunNode, area: str, area_id: str) -> bool:
+        """节点是否就是这次进图的区域。
+
+        area id 相同 = 直接命中（权威身份）。
+        否则按区域名匹配；预置的第一幕起点可能只有回退译名，
+        靠 area id 才能对上。
+        """
+        if area_id and node.area_id and node.area_id == area_id:
+            return True
+        if not self._areas_match(area, node.name):
+            return False
+        return self._area_id_compatible(node, area_id)
+
     def _find_forward_match(self, area: str, area_id: str = "") -> int | None:
         """仅在当前节点之后查找匹配（只认向前推进）。
 
@@ -971,13 +1098,13 @@ class RunEngine:
             node = nodes[index]
             if node.completed and not node.skipped:
                 continue
-            if self._areas_match(area, node.name) and self._area_id_compatible(node, area_id):
+            if self._node_matches(node, area, area_id):
                 return index
         for index in range(limit, len(nodes)):
             node = nodes[index]
             if node.completed and not node.skipped:
                 continue
-            if self._areas_match(area, node.name) and self._area_id_compatible(node, area_id):
+            if self._node_matches(node, area, area_id):
                 test_log.write(
                     "RUN",
                     "忽略进图（匹配点超出识别窗口）",

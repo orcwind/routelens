@@ -298,6 +298,51 @@ class RouteLensSmokeTests(unittest.TestCase):
         finally:
             root.update_idletasks()
 
+    def test_minimal_mode_always_shows_total_timer(self) -> None:
+        """极简模式没有任何节点时也必须画出总时间（用户实测看不到计时）。"""
+        root = shared_tk_root()
+        try:
+            panel = SplitPanel(root, width=280, height=120)
+            panel.pack()
+            root.update_idletasks()
+            panel.set_minimal(True)
+            panel.set_rows([], 0, total_text="01:23.45")
+            root.update_idletasks()
+
+            rendered = {
+                str(panel.itemcget(item, "text"))
+                for item in panel.find_all()
+                if panel.type(item) == "text"
+            }
+            self.assertIn("01:23.45", rendered)
+            panel.destroy()
+        finally:
+            root.update_idletasks()
+
+    def test_minimal_mode_with_rows_shows_total_timer(self) -> None:
+        root = shared_tk_root()
+        try:
+            panel = SplitPanel(root, width=280, height=120)
+            panel.pack()
+            root.update_idletasks()
+            panel.set_minimal(True)
+            rows = [
+                {"name": "河岸", "time": "01:00", "ref": "", "delta": "", "status": "completed"},
+                {"name": "皆伐營地", "time": "00:12", "ref": "", "delta": "", "status": "current"},
+            ]
+            panel.set_rows(rows, 1, total_text="02:03.45")
+            root.update_idletasks()
+
+            rendered = {
+                str(panel.itemcget(item, "text"))
+                for item in panel.find_all()
+                if panel.type(item) == "text"
+            }
+            self.assertIn("02:03.45", rendered)
+            panel.destroy()
+        finally:
+            root.update_idletasks()
+
     def test_reference_route_no_append(self) -> None:
         engine = RunEngine(load_routelens_config())
         routes = engine.store.list_routes()

@@ -138,6 +138,8 @@ class ActiveRun:
     started_at: str = ""
     is_active: bool = True
     is_paused: bool = False
+    # 剧情已结束（PoE1 Act 10 奇塔弗）：出现后计时自动暂停
+    campaign_over: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -151,6 +153,7 @@ class ActiveRun:
             "started_at": self.started_at,
             "is_active": self.is_active,
             "is_paused": self.is_paused,
+            "campaign_over": self.campaign_over,
         }
 
     @classmethod
@@ -166,6 +169,7 @@ class ActiveRun:
             started_at=str(data.get("started_at", "")),
             is_active=bool(data.get("is_active", True)),
             is_paused=bool(data.get("is_paused", False)),
+            campaign_over=bool(data.get("campaign_over", False)),
         )
 
     @property

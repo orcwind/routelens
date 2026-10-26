@@ -13,6 +13,8 @@ class EventType(str, Enum):
     DISCONNECTED = "disconnected"
     LOG_OPENED = "log_opened"
     INSTANCE_CONNECT = "instance_connect"
+    # 剧情结束：PoE1 打完 Act 10 奇塔弗（-60% 全抗永久削弱）
+    CAMPAIGN_END = "campaign_end"
 
 
 @dataclass(frozen=True)

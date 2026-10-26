@@ -1992,6 +1992,7 @@ class RouteLensApp:
             },
             exit_minimal=self._t("exit_minimal"),
             close_app=self._t("close"),
+            waiting=self._t("waiting_area"),
         )
 
         self._pack_run_normal_layout()
@@ -2622,6 +2623,8 @@ class RouteLensApp:
 
         if self.engine.timer_running:
             self.current_var.set("")
+        elif run.campaign_over:
+            self.current_var.set(self._t("campaign_over"))
         else:
             self.current_var.set(self._t("press_0"))
 

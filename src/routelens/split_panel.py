@@ -44,6 +44,7 @@ class SplitPanel(tk.Canvas):
         }
         self._menu_exit_minimal = "退出极简模式"
         self._menu_close = "关闭"
+        self._waiting_text = "等待进图"
         self._ct_on = False
         self._ct_header_text = "⚡ Shift+S 恢复点击"
         self._on_exit_minimal: Callable[[], None] | None = None
@@ -73,6 +74,7 @@ class SplitPanel(tk.Canvas):
         headers: dict[str, str] | None = None,
         exit_minimal: str | None = None,
         close_app: str | None = None,
+        waiting: str | None = None,
     ) -> None:
         """表头与右键菜单文案（节点名等内容仍由外部数据决定，不翻译）。"""
         if headers:
@@ -81,6 +83,8 @@ class SplitPanel(tk.Canvas):
             self._menu_exit_minimal = exit_minimal
         if close_app is not None:
             self._menu_close = close_app
+        if waiting is not None:
+            self._waiting_text = waiting
         self._redraw(preserve_scroll=True)
 
     def set_click_through_hint(self, text: str, *, enabled: bool) -> None:
@@ -146,6 +150,20 @@ class SplitPanel(tk.Canvas):
     def redraw(self, *, preserve_scroll: bool = False) -> None:
         self._redraw(preserve_scroll=preserve_scroll)
 
+    def _waiting_row(self) -> dict:
+        """极简模式的占位行（还没有任何节点时）。
+
+        名字列提示「等待进图」，数值列留空；总时间仍会画在这一行上，
+        保证计时器永远可见。
+        """
+        return {
+            "name": self._waiting_text,
+            "time": "",
+            "ref": "",
+            "delta": "",
+            "status": "current",
+        }
+
     def _visible_minimal_indices(self) -> tuple[list[int], int]:
         """极简可见行索引与当前行索引。"""
         ci = self._current_index
@@ -193,13 +211,14 @@ class SplitPanel(tk.Canvas):
         bump = 2
         indices, ci = self._visible_minimal_indices()
         visible = [self._rows[i] for i in indices if 0 <= i < len(self._rows)]
+        if not visible:
+            # 无节点时画占位行（「等待进图」），宽度也要算进去
+            visible = [self._waiting_row()]
 
         max_name = self._text_width(self._headers.get("node", "节点"), self._header_font())
-        for idx in indices:
-            if idx < 0 or idx >= len(self._rows):
-                continue
-            name = str(self._rows[idx].get("name", ""))
-            font = self._name_font(bump=bump if idx == ci else 0)
+        for row in visible:
+            name = str(row.get("name", ""))
+            font = self._name_font(bump=bump)
             max_name = max(max_name, self._text_width(name, font))
 
         times = [str(r.get("time", "")) for r in visible]
@@ -541,8 +560,13 @@ class SplitPanel(tk.Canvas):
         y = header_h
         if self._minimal:
             indices, ci = self._visible_minimal_indices()
+            if not indices:
+                # 一个节点都没有时也要画一行占位：否则总时间画在「当前行」上，
+                # 没有当前行 = 计时器完全不显示（用户实测：新建路线后极简看不到计时）。
+                indices = [-1]
+                ci = -1
             for idx in indices:
-                row = self._rows[idx]
+                row = self._rows[idx] if idx >= 0 else self._waiting_row()
                 is_current = idx == ci
                 y += self._draw_row(
                     y=y,

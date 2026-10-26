@@ -1,4 +1,4 @@
-# 轨镜 RouteLens
+﻿# 轨镜 RouteLens
 
 [中文](#中文) · [English](#english)
 
@@ -10,13 +10,13 @@
 
 适合分段练习自己的开荒路线：随时保存、下次继续，而不是一次必须打完。
 
-**当前版本：** `0.1.5`  
+**当前版本：** `0.1.7`  
 **仓库：** [github.com/orcwind/routelens](https://github.com/orcwind/routelens)
 
 ### 下载与使用（玩家）
 
 1. 打开 [Releases](https://github.com/orcwind/routelens/releases)
-2. 下载最新的 Windows 压缩包（例如 `RouteLens-v0.1.5-win64.zip`）
+2. 下载最新的 Windows 压缩包（例如 `RouteLens-v0.1.7-win64.zip`）
 3. 解压后运行 `RouteLens.exe`
 
 ### 功能
@@ -84,8 +84,8 @@ python src/routelens_app.py
 powershell -ExecutionPolicy Bypass -File .\build_routelens.ps1
 ```
 
-产物：`dist/RouteLens/RouteLens.exe`，以及 `dist/RouteLens-v0.1.5-win64.zip`（可直接上传到 GitHub Releases）。  
-自动更新依赖：Release **tag** 如 `v0.1.5`，资源名含 `win64.zip`。
+产物：`dist/RouteLens/RouteLens.exe`，以及 `dist/RouteLens-v0.1.7-win64.zip`（可直接上传到 GitHub Releases）。  
+自动更新依赖：Release **tag** 如 `v0.1.7`，资源名含 `win64.zip`。
 
 ---
 
@@ -95,13 +95,13 @@ powershell -ExecutionPolicy Bypass -File .\build_routelens.ps1
 
 Built for practicing your own campaign route in sessions: save anytime, continue later, instead of clearing acts in one sitting.
 
-**Version:** `0.1.5`  
+**Version:** `0.1.7`  
 **Repo:** [github.com/orcwind/routelens](https://github.com/orcwind/routelens)
 
 ### Download (players)
 
 1. Open [Releases](https://github.com/orcwind/routelens/releases)
-2. Download the latest Windows zip (e.g. `RouteLens-v0.1.5-win64.zip`)
+2. Download the latest Windows zip (e.g. `RouteLens-v0.1.7-win64.zip`)
 3. Extract and run `RouteLens.exe`
 
 No Python install needed for the release build.
@@ -171,4 +171,4 @@ Build the Windows executable:
 powershell -ExecutionPolicy Bypass -File .\build_routelens.ps1
 ```
 
-Outputs: `dist/RouteLens/RouteLens.exe` and `dist/RouteLens-v0.1.5-win64.zip` (upload the zip to GitHub Releases).
+Outputs: `dist/RouteLens/RouteLens.exe` and `dist/RouteLens-v0.1.7-win64.zip` (upload the zip to GitHub Releases).

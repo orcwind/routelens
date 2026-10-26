@@ -171,7 +171,11 @@ class BlankRouteTests(_IsolatedEngineCase):
             self.engine.simulate_area(area, write_client=False)
 
         assert self.engine.active_run is not None
-        self.assertEqual([n.name for n in self.engine.active_run.nodes], ["A", "B"])
+        # 自由路线预置第一幕固定起点（PoE1 = 1_1_1 The Twilight Strand）
+        self.assertEqual(
+            [n.name for n in self.engine.active_run.nodes],
+            ["The Twilight Strand", "A", "B"],
+        )
         self.assertIsNone(self.engine.comparison_delta_seconds())
 
     def test_hideout_is_never_recorded(self) -> None:
@@ -181,7 +185,10 @@ class BlankRouteTests(_IsolatedEngineCase):
         self.engine.simulate_area("B", write_client=False)
 
         assert self.engine.active_run is not None
-        self.assertEqual([n.name for n in self.engine.active_run.nodes], ["A", "B"])
+        self.assertEqual(
+            [n.name for n in self.engine.active_run.nodes],
+            ["The Twilight Strand", "A", "B"],
+        )
 
 
 if __name__ == "__main__":
