@@ -1,6 +1,6 @@
 """轨镜版本与关于信息。"""
 
-VERSION = "0.1.8"
+VERSION = "0.1.9"
 APP_NAME = "轨镜"
 APP_NAME_EN = "RouteLens"
 APP_DISPLAY = f"{APP_NAME} {APP_NAME_EN}"

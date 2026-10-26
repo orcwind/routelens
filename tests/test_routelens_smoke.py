@@ -505,7 +505,16 @@ class RouteLensSmokeTests(unittest.TestCase):
                 self.assertIsNotNone(bar)
                 bar_w = bar.winfo_width()
                 visible = [w for w, _g in app._hotkey_bar_items if w.place_info()]
-                self.assertTrue(visible)
+                self.assertTrue(
+                    visible,
+                    msg=(
+                        f"width={width} 未摆放: bar_w={bar_w} "
+                        f"items={len(app._hotkey_bar_items)} "
+                        f"viewable={app.root.winfo_viewable()} "
+                        f"root_w={app.root.winfo_width()} "
+                        f"bar_height={app._hotkey_bar_height}"
+                    ),
+                )
                 for widget in visible:
                     self.assertLessEqual(
                         widget.winfo_x() + widget.winfo_width(),
@@ -523,6 +532,30 @@ class RouteLensSmokeTests(unittest.TestCase):
                 app._global_hotkeys.shutdown()
                 app._global_hotkeys = None
             app.root.update_idletasks()
+
+    def test_click_through_hint_text_reports_hotkey_conflict(self) -> None:
+        """全局热键注册失败（1409 被占用）必须如实提示，而不是静默失效。"""
+        from routelens.gui import click_through_hint_text
+        from routelens.ui_i18n import UI_LANG_ZH, t
+
+        def _t(key: str) -> str:
+            return t(UI_LANG_ZH, key)
+
+        text, _color = click_through_hint_text(
+            click_through=False, hotkey_registered=False, translate=_t
+        )
+        self.assertIn(_t("click_through_unavailable"), text)
+
+        text, _color = click_through_hint_text(
+            click_through=False, hotkey_registered=True, translate=_t
+        )
+        self.assertIn(_t("click_through_off"), text)
+        self.assertNotIn(_t("click_through_unavailable"), text)
+
+        text, _color = click_through_hint_text(
+            click_through=True, hotkey_registered=True, translate=_t
+        )
+        self.assertIn(_t("click_through_on"), text)
 
     def test_hotkey_digit_mapping(self) -> None:
         from routelens.gui import RouteLensApp, _NUMPAD_KEYCODE_TO_DIGIT

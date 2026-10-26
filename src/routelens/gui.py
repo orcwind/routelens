@@ -70,6 +70,7 @@ from .theme import (
     WINDOW_EDGE,
     apply_theme,
 )
+from .single_instance import start_activation_watcher
 from .split_panel import SplitPanel
 from .tray_icon import apply_window_icon, load_tray_image, load_window_icon_image
 from .ui_i18n import UI_LANG_EN, UI_LANG_ZH, t
@@ -89,6 +90,21 @@ _INTERACTION_EXEMPT_CLASSES = {
     "TScrollbar",
     "CTkScrollbar",
 }
+def click_through_hint_text(
+    *,
+    click_through: bool,
+    hotkey_registered: bool,
+    translate,
+) -> tuple[str, str]:
+    """提示条上 Shift+S 那一段的文案与颜色（纯函数，便于单测）。"""
+    if click_through:
+        return f"⚡ {translate('hk_click_through')} · {translate('click_through_on')}", GOLD_FG
+    if not hotkey_registered:
+        # 全局热键被占用（1409）：如实提示，不要静默失效
+        return f"Shift+S {translate('click_through_unavailable')}", MUTED_FG
+    return f"Shift+S {translate('click_through_off')}", MUTED_FG
+
+
 GAME_GROUP_LABELS = {
     "poe1": "Path of Exile",
     "poe2": "Path of Exile 2",
@@ -568,12 +584,11 @@ class RouteLensApp:
         label = self._click_through_label
         if label is None:
             return
-        if self._click_through:
-            text = f"⚡ {self._t('hk_click_through')} · {self._t('click_through_on')}"
-            color = GOLD_FG
-        else:
-            text = f"Shift+S {self._t('click_through_off')}"
-            color = MUTED_FG
+        text, color = click_through_hint_text(
+            click_through=self._click_through,
+            hotkey_registered=self._hotkey_registered,
+            translate=self._t,
+        )
         try:
             label.configure(text=text, fg=color)
         except tk.TclError:
@@ -629,11 +644,13 @@ class RouteLensApp:
         if ok:
             self._hotkey_retry_after = 0
             self._hotkey_registered = True
+            self._refresh_click_through_label()
             return
         # 注册失败多为热键被其他程序临时占用（1409）：退避重试，不静默失效
         err = getattr(hotkeys, "last_error", 0)
         test_log.write("WARN", "全局热键注册失败，将重试", hotkey="Shift+S", win_error=err)
         self._hotkey_registered = False
+        self._refresh_click_through_label()
         self._schedule_hotkey_retry()
 
     def _schedule_hotkey_retry(self) -> None:
@@ -665,6 +682,7 @@ class RouteLensApp:
             self._hotkey_registered = True
             self._hotkey_retry_after = 0
             test_log.write("USER", "全局热键重试成功", hotkey="Shift+S")
+            self._refresh_click_through_label()
             return
         self._schedule_hotkey_retry()
 
@@ -1298,6 +1316,35 @@ class RouteLensApp:
                 icon.stop()
             except Exception:
                 pass
+
+    def attach_single_instance_activation(self, event_handle: int) -> None:
+        """第二个实例启动 → 把它请求的「显示窗口」落到本实例（含托盘恢复）。
+
+        工作线程只往队列里塞信号，Tk 相关操作全部在主线程泵里执行。
+        """
+        if not event_handle:
+            return
+        import queue
+
+        signals: "queue.Queue[bool]" = queue.Queue()
+
+        def _drain() -> None:
+            try:
+                signals.get_nowait()
+            except queue.Empty:
+                pass
+            else:
+                try:
+                    self._restore_from_tray()
+                except tk.TclError:
+                    pass
+            try:
+                self.root.after(300, _drain)
+            except tk.TclError:
+                pass
+
+        start_activation_watcher(event_handle, lambda: signals.put(True))
+        self.root.after(300, _drain)
 
     def _restore_from_tray(self) -> None:
         self.root.deiconify()
