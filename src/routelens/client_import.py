@@ -12,6 +12,7 @@ from .act_map import (
     is_poe1_campaign_area_id,
     is_poe2_campaign_area_id,
 )
+from .campaign_end import log_has_campaign_end, truncate_at_campaign_end
 from .campaign_start import campaign_start_area_id
 from .hideout_filter import is_hideout_area
 from .log_analyzer import analyze_client_log
@@ -76,7 +77,11 @@ def _filtered_splits(session_dict: dict, game_id: str | None = None) -> list[dic
     ]
     if game_id:
         splits = _drop_non_campaign_splits(splits, game_id)
-        splits = truncate_at_campaign_end(splits, game_id)
+        if not any(str(split.get("area_id") or "").strip() for split in splits):
+            # 整段没有 area id（极旧日志 / 无 Generating 行）：无法判幕也无法
+            # 找起点，只能退回旧行为 —— 按剧情结束后截断。
+            return truncate_at_campaign_end(splits, game_id)
+        # 一次开荒 = 从第一幕起点 → 剧情结束；中间反复回旧节点由去重处理。
         splits = _select_campaign_run(splits, game_id)
     return splits
 
@@ -84,20 +89,19 @@ def _filtered_splits(session_dict: dict, game_id: str | None = None) -> list[dic
 def _split_campaign_runs(splits: list[dict], game_id: str) -> list[list[dict]]:
     """按「开荒起点」把节点切成若干次 run。
 
-    开荒必然从第一幕固定起点开始（PoE1 = ``1_1_1`` / PoE2 = ``G1_1``），
+    一次开荒必然从第一幕固定起点开始（PoE1 = ``1_1_1`` / PoE2 = ``G1_1``），
     所以每一次出现起点 = 一次**新的开荒**。
 
-    为什么需要切分：一个 Client 进程里可以反复**切换角色**
-    （实测 2026-10-26 PoE1 日志：同一会话 09:02 是旧角色在 Act 3 城镇，
-    13:21 才新建角色从 Twilight Strand 开始，17:02 又换成别的角色在 Act 9）。
-    日志里没有「换角色」事件（只有升级行才带角色名），若不切分，
-    会把别的角色的节点混进这条路线。
+    **找不到起点就返回空**（这条记录不能用）：
+    Client.txt 会被轮转 / 清理，日志很可能只剩中途某一段。
+    没有起点就无法确认「这是从那一次开荒的中途开始的」，
+    按用户要求**放弃**，不伪造第一幕起点。
 
-    第一个起点之前的节点属于「上一个角色」，直接丢弃。
+    第一个起点之前的节点属于「上一个角色 / 上一段」，直接丢弃。
     """
     start_id = campaign_start_area_id(game_id)
     if not start_id or not splits:
-        return [splits] if splits else []
+        return []
     runs: list[list[dict]] = []
     current: list[dict] = []
     for split in splits:
@@ -109,59 +113,81 @@ def _split_campaign_runs(splits: list[dict], game_id: str) -> list[list[dict]]:
             current.append(split)
     if current:
         runs.append(current)
-    # 整段里没有起点（会话开始时角色已在中途）：整段算一次 run，
-    # 仍要按幕号单调性剪掉「换角色」污染。
-    return runs or [list(splits)]
+    return runs
 
 
-def _truncate_impossible_progression(splits: list[dict], game_id: str) -> list[dict]:
-    """在「不可能的跨幕跳变」处截断。
+def _cut_impossible_forward_jump(splits: list[dict], game_id: str) -> list[dict]:
+    """在「前进超过 1 幕」处截断 —— 那是换了角色，不属于这次开荒。
 
-    单次开荒里幕号只能**逐步前进**（每次最多 +1 幕）。
-    日志里出现「Act 1 → Act 3」「Act 9 → Act 6」「Act 9 → Act 2」这类跳变，
-    都是**换了角色**在同一个 Client 进程里乱跑，不属于这次开荒。
+    幕号只能**逐幕前进**：Act 1 的角色物理上不可能直接出现在 Act 9 区域。
+    日志窗口里出现 Act 1 → Act 9，说明同一 Client 进程里换了别的角色
+    （实测 2026-10-26 PoE1：09:02 旧角色 Act 3 → 13:21 新建角色 Act 1 →
+    17:02 又换了 Act 9 的角色，日志里没有任何换角色事件）。
 
-    规则（只用 area id，不看区域名）：
-
-    * 前进超过 1 幕 → 截断
-    * 回退超过 1 幕 → 截断（回退 1 幕视为正常折返，保留）
-    * 无幕归属的节点（支线 / 试炼 / 剧情结束）不影响判断，照常保留
+    **回退不截断**：角色可以用传送点回旧幕做支线 / 买装备，这是正常开荒行为，
+    重复的旧节点由去重逻辑处理（按 area id，同一地点只保留首次出现）。
     """
     if not splits:
         return splits
     max_act = 0
     allowed: list[dict] = []
     for split in splits:
-        info = detect_act(str(split.get("area_id") or ""), game_id)
-        act = info.act
+        act = detect_act(str(split.get("area_id") or ""), game_id).act
         if act is not None:
             if max_act and act > max_act + 1:
-                break
-            if max_act and act < max_act - 1:
                 break
             max_act = max(max_act, act)
         allowed.append(split)
     return allowed
 
 
+def _campaign_run_score(run: list[dict], game_id: str) -> tuple:
+    """挑哪一段开荒：**完整通关优先**，其次节点多。
+
+    用户要求的是「从第一幕开始一直跑到剧情结束」的完整记录；
+    同一次会话里若出现多次开荒（反复新建角色），取通关的那一段。
+    """
+    return (log_has_campaign_end(run, game_id), len(run))
+
+
 def _select_campaign_run(splits: list[dict], game_id: str) -> list[dict]:
     """从一次会话里选出**属于开荒的那一段节点**。
 
-    会话可能混有多个角色（见 :func:`_split_campaign_runs`）：
-    按起点切分后，每段都剪掉不可能的跨幕跳变，取**节点最多**的那段
-    （主体开荒），而不是把几段拼起来。
-    找不到起点时原样返回（不凭猜测裁剪）。
+    ``splits`` 此时已去掉藏身处 / 非剧情区。
+    处理顺序：按起点切 run → 每段剪掉「换角色」的前进跳跃 → 剪到剧情结束 →
+    取最完整的一段。
+
+    **没有起点不等于放弃**：同一次开荒的后续会话（退出游戏后再上线）
+    本来就不会再出现第一幕起点，必须保留并在**角色级合并**时接上。
+    「整条记录是否从第一幕开始」由 :func:`has_campaign_start` 在合并后判定。
     """
     game = str(game_id or "").strip().lower()
     runs = _split_campaign_runs(splits, game)
     if not runs:
-        return splits
+        runs = [list(splits)]
     best: list[dict] = []
+    best_score: tuple = ()
     for run in runs:
-        trimmed = _truncate_impossible_progression(run, game)
-        if len(trimmed) > len(best):
-            best = trimmed
-    return best or splits
+        cut = _cut_impossible_forward_jump(run, game)
+        cut = truncate_at_campaign_end(cut, game)
+        score = _campaign_run_score(cut, game)
+        if not best or score > best_score:
+            best, best_score = cut, score
+    return best
+
+
+def has_campaign_start(splits: list[dict], game_id: str) -> bool:
+    """这条记录是否包含**第一幕起点**（PoE1 ``1_1_1`` / PoE2 ``G1_1``）。
+
+    开荒必然从第一幕起点开始。日志被轮转 / 只剩中后段时找不到起点，
+    这种记录无法确认是不是一次完整开荒 → 按用户要求放弃。
+    """
+    start_id = campaign_start_area_id(game_id)
+    if not start_id:
+        return True
+    return any(
+        str(split.get("area_id") or "").strip() == start_id for split in splits
+    )
 
 
 def _drop_non_campaign_splits(splits: list[dict], game_id: str) -> list[dict]:
@@ -416,6 +442,14 @@ def _group_and_merge_sessions(session_dicts: list[dict], *, game_id: str = "") -
             continue
         route = merge_session_dicts(ordered, source="client_txt", game_id=game_id)
         merged.append(_merged_route_to_session_dict(route, raw_session_count=len(ordered)))
+    if game_id:
+        # 合并后仍然找不到第一幕起点 = 日志已轮转 / 只剩中后段，
+        # 无法确认是一次完整开荒 → 放弃（不伪造第一幕起点）。
+        merged = [
+            item
+            for item in merged
+            if has_campaign_start(_filtered_splits(item, game_id), game_id)
+        ]
     merged.sort(key=lambda item: item.get("ended_at") or item.get("started_at") or "", reverse=True)
     return merged
 

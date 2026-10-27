@@ -22,7 +22,11 @@ sys.path.insert(0, str(SRC_DIR))
 
 from routelens.act_map import act_chapter_label, is_poe1_campaign_area_id
 from routelens.chapter_normalize import sort_chapters
-from routelens.client_import import _filtered_splits, _infer_chapters_from_splits
+from routelens.client_import import (
+    _filtered_splits,
+    _infer_chapters_from_splits,
+    has_campaign_start,
+)
 
 
 def _split(area_id: str, area: str = "", seconds: float = 0.0) -> dict:
@@ -118,14 +122,56 @@ class Poe1FilteredSplitsTest(unittest.TestCase):
 
     def test_drop_non_campaign_area(self) -> None:
         splits = [
+            _split("1_1_1", "The Twilight Strand"),
             _split("1_2_1", "The Southern Forest"),
             _split("KalguuranSettlersLeague", "Kingsmarch"),
             _split("1_2_town", "The Forest Encampment"),
         ]
         got = _filtered_splits(_session(splits), "poe1")
         self.assertEqual(
-            [s["area_id"] for s in got], ["1_2_1", "1_2_town"]
+            [s["area_id"] for s in got], ["1_1_1", "1_2_1", "1_2_town"]
         )
+
+    def test_backjump_is_kept_for_dedup(self) -> None:
+        # 逐幕前进到 Act 9 后，角色用传送点回 Act 1 做支线 = 正常开荒，不能截断；
+        # 重复节点由 build_splits 的 area_id 去重处理。
+        splits = [
+            _split("1_1_1"),
+            _split("1_2_town"),
+            _split("1_3_town"),
+            _split("1_4_town"),
+            _split("1_5_town"),
+            _split("2_6_town"),
+            _split("2_7_town"),
+            _split("2_8_town"),
+            _split("2_9_1"),
+            _split("1_1_town"),
+        ]
+        got = _filtered_splits(_session(splits), "poe1")
+        self.assertEqual(
+            [s["area_id"] for s in got],
+            [
+                "1_1_1",
+                "1_2_town",
+                "1_3_town",
+                "1_4_town",
+                "1_5_town",
+                "2_6_town",
+                "2_7_town",
+                "2_8_town",
+                "2_9_1",
+                "1_1_town",
+            ],
+        )
+
+    def test_no_campaign_start_is_dropped_at_character_level(self) -> None:
+        # 日志被轮转，只剩 Act 9 一段：会话级**保留**（可能是同一次开荒的后续），
+        # 但角色级合并后仍找不到第一幕起点 → 放弃该记录（不伪造起点）。
+        splits = [_split("2_9_1"), _split("2_9_2"), _split("2_10_1")]
+        got = _filtered_splits(_session(splits), "poe1")
+        self.assertEqual([s["area_id"] for s in got], ["2_9_1", "2_9_2", "2_10_1"])
+        self.assertFalse(has_campaign_start(got, "poe1"))
+        self.assertTrue(has_campaign_start([_split("1_1_1")], "poe1"))
 
     def test_cut_impossible_forward_jump(self) -> None:
         # Act 1 跑到一半突然跳到 Act 3 城镇 = 换了角色
@@ -141,18 +187,8 @@ class Poe1FilteredSplitsTest(unittest.TestCase):
             [s["area_id"] for s in got], ["1_1_1", "1_1_town", "1_1_2"]
         )
 
-    def test_cut_impossible_backjump(self) -> None:
-        # 已到 Act 9，下一步却是 Act 6 城镇（回退 3 幕）= 换了角色
-        splits = [
-            _split("2_9_1"),
-            _split("2_6_town"),
-            _split("1_2_town"),
-        ]
-        got = _filtered_splits(_session(splits), "poe1")
-        self.assertEqual([s["area_id"] for s in got], ["2_9_1"])
-
     def test_allow_backtrack_one_act(self) -> None:
-        # 回退 1 幕视为正常折返，不能剪
+        # 回退任意幕数都保留（传送点回旧幕），去重负责去重复
         splits = [
             _split("1_1_1"),
             _split("1_2_1"),
