@@ -5,6 +5,14 @@ from datetime import datetime
 from pathlib import Path
 
 from .area_registry import AreaRegistry
+from .act_map import (
+    act_chapter_label,
+    detect_act,
+    is_campaign_over_area_id,
+    is_poe1_campaign_area_id,
+    is_poe2_campaign_area_id,
+)
+from .campaign_start import campaign_start_area_id
 from .hideout_filter import is_hideout_area
 from .log_analyzer import analyze_client_log
 from .log_locale import detect_client_log_locale
@@ -22,6 +30,8 @@ TAIL_READ_SIZES = (
 )
 TAIL_SESSION_SCAN_LIMIT = 200
 MIN_COMPLETE_NODES = 35
+# 过滤后不足这么多剧情节点 = 登录/回城残留，不算一条路线
+MIN_ROUTE_SPLITS = 4
 UNKNOWN_CHAPTER_LABELS = frozenset({"未知", "未知章节", ""})
 
 EARLY_CHAPTERS = {"第一章", "第二章", "Act 1", "Act 2"}
@@ -65,8 +75,128 @@ def _filtered_splits(session_dict: dict, game_id: str | None = None) -> list[dic
         if not is_hideout_area(str(split.get("area") or split.get("area_en") or ""))
     ]
     if game_id:
+        splits = _drop_non_campaign_splits(splits, game_id)
         splits = truncate_at_campaign_end(splits, game_id)
+        splits = _select_campaign_run(splits, game_id)
     return splits
+
+
+def _split_campaign_runs(splits: list[dict], game_id: str) -> list[list[dict]]:
+    """按「开荒起点」把节点切成若干次 run。
+
+    开荒必然从第一幕固定起点开始（PoE1 = ``1_1_1`` / PoE2 = ``G1_1``），
+    所以每一次出现起点 = 一次**新的开荒**。
+
+    为什么需要切分：一个 Client 进程里可以反复**切换角色**
+    （实测 2026-10-26 PoE1 日志：同一会话 09:02 是旧角色在 Act 3 城镇，
+    13:21 才新建角色从 Twilight Strand 开始，17:02 又换成别的角色在 Act 9）。
+    日志里没有「换角色」事件（只有升级行才带角色名），若不切分，
+    会把别的角色的节点混进这条路线。
+
+    第一个起点之前的节点属于「上一个角色」，直接丢弃。
+    """
+    start_id = campaign_start_area_id(game_id)
+    if not start_id or not splits:
+        return [splits] if splits else []
+    runs: list[list[dict]] = []
+    current: list[dict] = []
+    for split in splits:
+        if str(split.get("area_id") or "").strip() == start_id:
+            if current:
+                runs.append(current)
+            current = [split]
+        elif current:
+            current.append(split)
+    if current:
+        runs.append(current)
+    # 整段里没有起点（会话开始时角色已在中途）：整段算一次 run，
+    # 仍要按幕号单调性剪掉「换角色」污染。
+    return runs or [list(splits)]
+
+
+def _truncate_impossible_progression(splits: list[dict], game_id: str) -> list[dict]:
+    """在「不可能的跨幕跳变」处截断。
+
+    单次开荒里幕号只能**逐步前进**（每次最多 +1 幕）。
+    日志里出现「Act 1 → Act 3」「Act 9 → Act 6」「Act 9 → Act 2」这类跳变，
+    都是**换了角色**在同一个 Client 进程里乱跑，不属于这次开荒。
+
+    规则（只用 area id，不看区域名）：
+
+    * 前进超过 1 幕 → 截断
+    * 回退超过 1 幕 → 截断（回退 1 幕视为正常折返，保留）
+    * 无幕归属的节点（支线 / 试炼 / 剧情结束）不影响判断，照常保留
+    """
+    if not splits:
+        return splits
+    max_act = 0
+    allowed: list[dict] = []
+    for split in splits:
+        info = detect_act(str(split.get("area_id") or ""), game_id)
+        act = info.act
+        if act is not None:
+            if max_act and act > max_act + 1:
+                break
+            if max_act and act < max_act - 1:
+                break
+            max_act = max(max_act, act)
+        allowed.append(split)
+    return allowed
+
+
+def _select_campaign_run(splits: list[dict], game_id: str) -> list[dict]:
+    """从一次会话里选出**属于开荒的那一段节点**。
+
+    会话可能混有多个角色（见 :func:`_split_campaign_runs`）：
+    按起点切分后，每段都剪掉不可能的跨幕跳变，取**节点最多**的那段
+    （主体开荒），而不是把几段拼起来。
+    找不到起点时原样返回（不凭猜测裁剪）。
+    """
+    game = str(game_id or "").strip().lower()
+    runs = _split_campaign_runs(splits, game)
+    if not runs:
+        return splits
+    best: list[dict] = []
+    for run in runs:
+        trimmed = _truncate_impossible_progression(run, game)
+        if len(trimmed) > len(best):
+            best = trimmed
+    return best or splits
+
+
+def _drop_non_campaign_splits(splits: list[dict], game_id: str) -> list[dict]:
+    """丢弃非剧情节点（PoE2 的异界地图 / 精华 / 禁區 / PoE1 移植区 …）。
+
+    * **PoE2**：``G<1..4>_*`` 之外的 area id 一律不是剧情。
+    * **PoE1**：剧情区域必然是 ``<幕>_<序号>…`` 形式（``1_1_2`` / ``2_10_9``）；
+      其余命名区域是**联盟城镇 / 藏身处 / 兽栏 / 矿井**等非剧情区
+      （实测 2026-10 真机日志里有 ``KalguuranSettlersLeague`` 君锋镇、
+      ``Menagerie_Hub``、``DeepwaterHub``、``MavenHub`` …）。
+      升华试炼 ``Labyrinth_Airlock`` / ``<act>_Labyrinth_*`` 例外保留 ——
+      试炼只记进门那一次（折叠由 trial.py 负责）。
+      异界地图 ``MapWorlds*`` 交给 :func:`truncate_at_campaign_end`。
+    """
+    game = str(game_id or "").strip().lower()
+    if game not in {"poe1", "poe2"}:
+        return splits
+    kept: list[dict] = []
+    for split in splits:
+        area_id = str(split.get("area_id") or "").strip()
+        if not area_id:
+            # 没有 area id = 无从判定，保留（宁可多留也不误删剧情）
+            kept.append(split)
+            continue
+        if game == "poe2":
+            if is_poe2_campaign_area_id(area_id) or is_campaign_over_area_id(
+                area_id, "poe2"
+            ):
+                kept.append(split)
+            continue
+        if is_poe1_campaign_area_id(area_id) or is_campaign_over_area_id(
+            area_id, "poe1"
+        ):
+            kept.append(split)
+    return kept
 
 
 def _raw_splits(session_dict: dict) -> list[dict]:
@@ -75,6 +205,8 @@ def _raw_splits(session_dict: dict) -> list[dict]:
 
 
 def _sanitize_chapters(chapters: list[str] | None) -> list[str]:
+    from .chapter_normalize import sort_chapters
+
     ordered: list[str] = []
     for chapter in chapters or []:
         name = str(chapter or "").strip()
@@ -82,7 +214,7 @@ def _sanitize_chapters(chapters: list[str] | None) -> list[str]:
             continue
         if name not in ordered:
             ordered.append(name)
-    return ordered
+    return sort_chapters(ordered)
 
 
 def _chapter_label_from_list(chapters: list[str]) -> str:
@@ -97,29 +229,40 @@ def _infer_chapters_from_splits(
     splits: list[dict],
     area_registry: AreaRegistry | None,
     area_chapter_map: dict[str, str],
+    game_id: str = "",
 ) -> list[str]:
+    """由节点推出章节。
+
+    **area id 是唯一权威**（PoE1 的 Client.txt 完全没有章节行，
+    只能靠 ``X_Y`` 的第二位数字判幕；PoE2 靠 ``G<act>_*``）。
+    区域名映射表仅作最后兜底。
+    """
+    from .chapter_normalize import sort_chapters
+
     chapters: list[str] = []
     for split in splits:
-        candidates = [
-            str(split.get("area_en") or ""),
-            str(split.get("area") or ""),
-        ]
-        if area_registry is not None:
-            for name in list(candidates):
-                if name:
-                    candidates.append(area_registry.canonical_name(name))
-                    candidates.append(area_registry.english_name(name))
-                    candidates.append(area_registry.display_name(name))
-        chapter = ""
-        for name in candidates:
-            if not name:
-                continue
-            chapter = area_chapter_map.get(name, "")
-            if chapter:
-                break
+        area_id = str(split.get("area_id") or "").strip()
+        chapter = act_chapter_label(area_id, game_id) if area_id else ""
+        if not chapter:
+            candidates = [
+                str(split.get("area_en") or ""),
+                str(split.get("area") or ""),
+            ]
+            if area_registry is not None:
+                for name in list(candidates):
+                    if name:
+                        candidates.append(area_registry.canonical_name(name))
+                        candidates.append(area_registry.english_name(name))
+                        candidates.append(area_registry.display_name(name))
+            for name in candidates:
+                if not name:
+                    continue
+                chapter = area_chapter_map.get(name, "")
+                if chapter:
+                    break
         if chapter and chapter not in chapters:
             chapters.append(chapter)
-    return chapters
+    return sort_chapters(chapters)
 
 
 def _area_lookup_keys(split: dict, area_registry: AreaRegistry | None) -> set[str]:
@@ -176,23 +319,26 @@ def _enrich_session_dict(
     default_game_id: str,
 ) -> dict:
     session = dict(session_dict)
-    chapters = _sanitize_chapters(session.get("chapters"))
+    game = infer_route_game_id(
+        session,
+        poe2_area_keys=poe2_area_keys,
+        area_registry=area_registry,
+        default_game_id=default_game_id,
+    )
+    # 章节以**裁剪后的节点**为准（area id 权威）：日志里的章节行可能包含
+    # 已被裁掉的尾巴（例：PoE2 角色先在 Act 4 城镇上线，章节读到「第四章」）。
+    chapters = _infer_chapters_from_splits(
+        _filtered_splits(session, game), area_registry, area_chapter_map, game
+    )
     if not chapters:
-        chapters = _infer_chapters_from_splits(
-            _filtered_splits(session), area_registry, area_chapter_map
-        )
+        chapters = _sanitize_chapters(session.get("chapters"))
     session["chapters"] = chapters
     label = str(session.get("chapter_label") or "").strip()
     if chapters:
         session["chapter_label"] = _chapter_label_from_list(chapters)
     elif label in UNKNOWN_CHAPTER_LABELS:
         session["chapter_label"] = ""
-    session["game_id"] = infer_route_game_id(
-        session,
-        poe2_area_keys=poe2_area_keys,
-        area_registry=area_registry,
-        default_game_id=default_game_id,
-    )
+    session["game_id"] = game
     return session
 
 
@@ -292,7 +438,13 @@ def sessions_to_reference_routes(
         },
         key=str.casefold,
     )
-    qualified = list(session_dicts)
+    qualified = [
+        session
+        for session in session_dicts
+        # 过滤后只剩「登录 → 城镇 → 终局城镇」这种 1~3 个节点残留，
+        # 不成路线（例：金司馬區 → 高地神塔庇護所），不要塞进路线列表。
+        if len(_filtered_splits(session, import_game)) >= MIN_ROUTE_SPLITS
+    ]
     qualified.sort(key=lambda item: item.get("ended_at") or item.get("started_at") or "", reverse=True)
     if max_routes > 0:
         qualified = qualified[:max_routes]

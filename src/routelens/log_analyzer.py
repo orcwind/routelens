@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .area_registry import AreaRegistry, known_area_name, remember_area_name
+from .act_map import act_chapter_label
 from .games.base import GameProfile
 from .games.registry import get_game
 from .log_parser import CLIENT_ID_RE, FOREIGN_CLIENT_IDS, GENERATING_AREA_RE, SCENE_RE
@@ -370,7 +371,9 @@ def _rebuild_chapters(session: LogRunSession) -> None:
     for visit in session.visits:
         if visit.chapter and visit.chapter not in chapters:
             chapters.append(visit.chapter)
-    session.chapters = chapters
+    from .chapter_normalize import sort_chapters
+
+    session.chapters = sort_chapters(chapters)
 
 
 def _switch_character(
@@ -530,11 +533,19 @@ def analyze_client_log(
         pending_area_id = ""
         scene_consumed = True
 
+        # 章节：日志有 [SCENE] 章节行时用日志（PoE2）；
+        # PoE1 的 Client.txt **没有章节行**，只能用 area id 判幕（唯一权威）。
+        # 不用 area id 兜底时 PoE1 全部会话 chapters 为空 → 路线名没章节、
+        # 完整度判定只能退化为「数节点」。
+        chapter = current_chapter
+        if not chapter and area_id:
+            chapter = act_chapter_label(area_id, str(game_id or ""))
+
         current.visits.append(
             AreaVisit(
                 area=area,
                 timestamp=timestamp,
-                chapter=current_chapter,
+                chapter=chapter,
                 area_id=area_id,
             )
         )

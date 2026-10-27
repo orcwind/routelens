@@ -89,6 +89,8 @@ def _chapter_label_from_list(chapters: list[str]) -> str:
 
 
 def _collect_chapters(*routes_or_sessions: dict) -> list[str]:
+    from .chapter_normalize import sort_chapters
+
     chapters: list[str] = []
     for item in routes_or_sessions:
         for chapter in item.get("chapters") or []:
@@ -102,7 +104,7 @@ def _collect_chapters(*routes_or_sessions: dict) -> list[str]:
                     chapters.append(name)
         elif label and label not in chapters:
             chapters.append(label)
-    return chapters
+    return sort_chapters(chapters)
 
 
 def _merge_splits(
@@ -113,8 +115,12 @@ def _merge_splits(
 ) -> list[dict]:
     """合并节点。
 
-    ``keep_repeated_names=False``（PoE2 / 通用）：同名区域只保留首次，
-    回城与重复读写都会塌成一个节点。
+    ``keep_repeated_names=False``（PoE2 / 通用）：按 **area id** 去重 ——
+    area id 相同 = 同一个区域实例（回城 / 来回跑）→ 丢弃；
+    **同名但 area id 不同 = 不同区域** → 保留。
+    （实测 PoE2 Act 4：``G4_8a`` 与 ``G4_8b`` 都叫「阿拉塔斯」，
+    ``G4_11_1a`` 与 ``G4_11_1b`` 都叫「尼加卡努」——按名字去重会吃掉后半程。
+    area id 缺失时才退回「按名字去重」。）
 
     ``keep_repeated_names=True``（PoE1）：Act 6–10 会复用 Act 1–5 的区域名，
     必须保留**跨幕**再次出现的同名区域；同一幕内来回跑的同名要丢弃。
@@ -158,7 +164,13 @@ def _merge_splits(
                     previous = last_index_by_area.get(area)
                     if previous is not None and len(merged) - 1 - previous < REPEAT_NAME_MIN_GAP:
                         continue
+            elif area_id:
+                # 有 area id = 以 area id 为唯一身份：
+                # 同 id = 同一个区域又去了一次 → 丢弃；不同 id = 不同区域 → 保留。
+                if area_id in seen_area_ids:
+                    continue
             elif area in seen_areas:
+                # 无 area id 时才退回「按名字去重」
                 continue
         seen.add(key)
         merged.append(split)

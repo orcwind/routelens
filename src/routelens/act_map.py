@@ -22,6 +22,20 @@ PoE2 —— area id 形如 ``G<act>_<sub>``：
     * ``Expedition*``     = 精华地图（支线内容，不是剧情也不是终局）
     * ``Incursion*``      = 禁區（支线内容）
     * ``P<n>_*``          = PoE1 移植区域（不属于 PoE2 剧情）
+
+PoE2 **剧情区域判定**（导入开荒路线时用）：
+
+    剧情 = area id 匹配 ``G<1..4>_*``（含 ``G<n>_town`` 城镇）。
+    以下**一律不是剧情**，不得进入开荒路线：
+
+    * ``Map*``                       异界地图
+    * ``Expedition*``                精华地图
+    * ``Incursion*``                 禁區
+    * ``Abyss*``                     深渊
+    * ``Sanctum_*``                  试炼内部房间
+    * ``Delirium*`` / ``Ritual*``    特殊地图
+    * ``P<n>_*``                     PoE1 移植区域（``P1_Town`` / ``P2_1`` …）
+    * ``Hideout*``                   藏身处
 """
 
 from __future__ import annotations
@@ -43,6 +57,29 @@ _POE1_MAP_PREFIXES = ("MapWorlds",)
 # PoE2：异界地图 / 精华 / 禁區
 _POE2_MAP_PREFIXES = ("Map",)
 _POE2_SIDE_PREFIXES = ("Expedition", "Incursion")
+
+# PoE2：**非剧情**前缀白名单（黑名单 = 明确不是剧情）。
+# 实测自真实 Client.txt（2026-10）：异界地图 / 精华 / 禁區 / 深渊 /
+# 试炼内部房间 / PoE1 移植区 / 藏身处，全部不是开荒剧情节点。
+_POE2_NON_CAMPAIGN_PREFIXES = (
+    "Map",  # 异界地图（含 MapUberBoss_* / MapUnique*）
+    "Expedition",  # 精华地图
+    "Incursion",  # 禁區
+    "Abyss",  # 深渊
+    "Sanctum_",  # 丝克玛试炼内部房间
+    "Delirium",  #  delirium 地图
+    "Ritual",  # 仪式地图
+    "Hideout",  # 藏身处
+    "ChayulaLeague",  # 剧情外赛季 boss 区域
+    "BreachDomain_",  # 裂隙
+)
+# PoE1 移植区（P1_Town / P2_1 / P3_Town …）不属于 PoE2 剧情
+_POE2_PORTED_TOWN_RE = re.compile(r"^P\d+_")
+
+# PoE1：剧情区域必然是 ``<幕>_<序号>…``（1_1_2 / 2_10_9 / 1_2_14_2）。
+_POE1_CAMPAIGN_AREA_RE = re.compile(r"^\d+_\d+")
+# PoE1 升华试炼：进门 Labyrinth_Airlock（Aspirants' Plaza）+ 内部 <act>_Labyrinth_*
+_POE1_TRIAL_AREA_RE = re.compile(r"^(?:\d+_)?Labyrinth_")
 
 # PoE1：``2_11`` 起为剧情结束后的海岸
 POE1_CAMPAIGN_END_ACT = 11
@@ -132,6 +169,21 @@ def detect_act(area_id: str, game_id: str) -> ActInfo:
     return ActInfo(None, area_id)
 
 
+def is_poe1_campaign_area_id(area_id: str) -> bool:
+    """PoE1 该 area id 是否属于**剧情**（含升华试炼入口 / 内部房间）。
+
+    剧情区域命名固定为 ``<幕>_<序号>…``。其余命名区域都是非剧情：
+    联盟城镇（``KalguuranSettlersLeague`` 君锋镇）、``Menagerie_Hub`` 兽栏、
+    ``DeepwaterHub``、``MavenHub``、藏身处、``Delve_Main`` 等。
+    """
+    aid = (area_id or "").strip()
+    if not aid:
+        return False
+    if _POE1_TRIAL_AREA_RE.match(aid):
+        return True
+    return bool(_POE1_CAMPAIGN_AREA_RE.match(aid))
+
+
 def act_count(game_id: str) -> int:
     game = str(game_id or "").strip().lower()
     if game == "poe1":
@@ -139,6 +191,35 @@ def act_count(game_id: str) -> int:
     if game == "poe2":
         return POE2_ACT_COUNT
     return 0
+
+
+_CHINESE_NUMERALS = ("零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十")
+
+
+def _chinese_numeral(value: int) -> str:
+    """1..20 → 中文数字（1 → 一，10 → 十，12 → 十二）。"""
+    if value < 0:
+        return str(value)
+    if value <= 10:
+        return _CHINESE_NUMERALS[value]
+    if value < 20:
+        return "十" + _CHINESE_NUMERALS[value - 10]
+    return str(value)
+
+
+def act_chapter_label(area_id: str, game_id: str) -> str:
+    """该 area id 所属的章节标签（``第一章`` … ``第十章``）；非剧情返回空串。
+
+    PoE1 的 Client.txt **没有章节行**（``[SCENE] Set Source`` 只有区域名，
+    实测 2026-10 真机日志无「第一章」/「Act 1」），因此章节只能由 area id 推出。
+    PoE2 有 ``[SCENE]`` 章节行，但仍可作交叉校验。
+
+    标签格式与界面既有章节名一致（中文数字）：``第一章`` / ``第十章``。
+    """
+    info = detect_act(area_id, game_id)
+    if info.act is None:
+        return ""
+    return f"第{_chinese_numeral(info.act)}章"
 
 
 def is_campaign_over_area_id(area_id: str, game_id: str) -> bool:
@@ -149,3 +230,36 @@ def is_campaign_over_area_id(area_id: str, game_id: str) -> bool:
 def is_endgame_map_area_id(area_id: str, game_id: str) -> bool:
     """该 area id 是否是异界地图（剧情之后的地图，不应导入开荒路线）。"""
     return detect_act(area_id, game_id).is_map
+
+
+def is_poe2_campaign_area_id(area_id: str) -> bool:
+    """该 area id 是否是 **PoE2 剧情区域**（开荒路线只应包含这些）。
+
+    判定 = area id 形如 ``G<1..4>_*``（含 ``G<n>_town`` 城镇）。
+
+    明确**不是**剧情的（实测自真实 Client.txt，2026-10）：
+
+    * ``Map*``               异界地图
+    * ``Expedition*``        精华地图
+    * ``Incursion*``         禁區
+    * ``Abyss*``             深渊
+    * ``Sanctum_*``          试炼内部房间
+    * ``Delirium*`` / ``Ritual*``
+    * ``Hideout*``           藏身处
+    * ``P<n>_*``             PoE1 移植区域（``P1_Town`` / ``P2_1`` …）
+
+    ``G_Endgame_Town``（剧情结束）单独处理：它是终点，不是剧情区域。
+    """
+    aid = (area_id or "").strip()
+    if not aid:
+        return False
+    if aid == "G_Endgame_Town":
+        return False
+    if aid.startswith(_POE2_NON_CAMPAIGN_PREFIXES):
+        return False
+    if _POE2_PORTED_TOWN_RE.match(aid):
+        return False
+    match = _POE2_ACT_ID_RE.match(aid)
+    if not match:
+        return False
+    return 1 <= int(match.group(1)) <= POE2_ACT_COUNT
