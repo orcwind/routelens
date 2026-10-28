@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import threading
 import tkinter as tk
 from datetime import datetime
@@ -37,7 +38,7 @@ from .updater import (
 )
 from .version import VERSION
 from .models import ActiveRun, ReferenceRoute, RunResult, format_delta, format_duration
-from .act_map import act_count
+from .act_map import act_count, chapter_slots, infer_game_from_area_id
 from .act_timing import build_act_timing, expected_act_labels
 from .setup import ensure_setup
 from .simulator import SimulatorPanel
@@ -1937,6 +1938,11 @@ class RouteLensApp:
         if route is None:
             messagebox.showinfo("提示", self._t("pick_route_first"), parent=self.root)
             return
+        # 按路线自己的游戏切过去：设置里默认 poe2，跑 PoE1 路线时
+        # 不切会把 10 幕判成 4 幕、第一幕种子起点也种成 PoE2 的。
+        route_game = str(getattr(route, "game_id", "") or "").strip().lower()
+        if route_game in {"poe1", "poe2"} and not self._switch_run_game(route_game):
+            return
         self.engine.begin_new_run(route)
         test_log.write("USER", "新 Run", route_id=route.route_id, route_name=route.name)
         self._show_run()
@@ -1990,6 +1996,12 @@ class RouteLensApp:
         saved = self.engine.get_saved_run_for_route(route.route_id)
         if saved is None:
             messagebox.showinfo("提示", self._t("no_continue"), parent=self.root)
+            return
+        # 续跑同样按路线的游戏切过去；旧存档没有 run.game_id 时用路线自己的。
+        resume_game = str(
+            getattr(saved, "game_id", "") or getattr(route, "game_id", "") or ""
+        ).strip().lower()
+        if resume_game in {"poe1", "poe2"} and not self._switch_run_game(resume_game):
             return
         self.engine.begin_continue_run(saved)
         test_log.write("USER", "继续 Run", route_id=route.route_id, index=saved.current_index)
@@ -2900,17 +2912,35 @@ class RouteLensApp:
             )
         return rows, run.current_index
 
+    def _resolve_run_game_id(self, run: ActiveRun) -> str:
+        """幕视图用的游戏：先看运行记录，再用 area id 形态兜底。
+
+        area id 是最硬的证据：``1_1_1`` = PoE1，``G1_1`` = PoE2。
+        设置里的「当前游戏」不能作为判定依据 —— 默认是 poe2，
+        跑 PoE1 路线会把 10 幕显示成 4 幕。
+        """
+        recorded = str(getattr(run, "game_id", "") or "").strip().lower()
+        if recorded in ("poe1", "poe2"):
+            return recorded
+        for node in run.nodes:
+            inferred = infer_game_from_area_id(getattr(node, "area_id", "") or "")
+            if inferred:
+                return inferred
+        return str(self.engine.config.game or "").strip().lower()
+
     def _build_act_rows(self, run: ActiveRun) -> tuple[list[dict], int]:
         """幕视图：逐幕一行（幕内所有区域用时求和）。
 
         幕归属由 area id 判定（见 :mod:`routelens.act_map`），
         因此不同玩家的节点顺序 / 支线不同都不影响分幕。
         """
-        game_id = str(self.engine.config.game or "").strip().lower()
+        game_id = self._resolve_run_game_id(run)
 
         # 参考路线的分幕用时（用于「参考」列）
         reference = self.engine.get_reference_route()
         ref_acts: dict[int, float] = {}
+        ref_interlude = 0.0
+        ref_endgame = 0.0
         if reference is not None:
             for act_split in build_act_timing(
                 [
@@ -2925,11 +2955,19 @@ class RouteLensApp:
             ).acts:
                 if act_split.act is not None:
                     ref_acts[act_split.act] = ref_acts.get(act_split.act, 0.0) + act_split.segment_seconds
+                elif act_split.is_interlude:
+                    ref_interlude += act_split.segment_seconds
+                elif act_split.is_endgame:
+                    ref_endgame += act_split.segment_seconds
 
         # 本次运行的节点（已完成的用已计时；当前的用实时段）
         run_splits: list[dict] = []
         for index, node in enumerate(run.nodes):
             if node.completed and node.skipped:
+                continue
+            # 还没跑到的参考节点不能进幕计时：否则 Act 5..10 会显示 00:00
+            # 并算作「已完成」，幕视图看起来像整条路线都跑完了。
+            if not node.completed and index != run.current_index:
                 continue
             seconds = node.seconds or 0.0
             if index == run.current_index and not node.completed:
@@ -2944,26 +2982,57 @@ class RouteLensApp:
             )
 
         timing = build_act_timing(run_splits, game_id)
-        # 幕骨架：PoE1 = Act 1..10，PoE2 = Act 1..4（未走到的幕显示为空）
-        total_acts = act_count(game_id)
+        # 章节骨架跟游戏内一致：
+        #   PoE1 = 第1..10章
+        #   PoE2 = 第1..4章 + 間歇 + 終局（缺間歇会把末段错算进第4章）
+        slots = chapter_slots(game_id)
+        if not slots:
+            slots = [("act", str(n)) for n in range(1, act_count(game_id) + 1)]
         by_act = {a.act: a for a in timing.acts if a.act is not None}
+        interlude_split = next((a for a in timing.acts if a.is_interlude), None)
+        endgame_split = next((a for a in timing.acts if a.is_endgame), None)
         current_act = timing.current_act
+        current_chapter = timing.current_chapter
         act_labels = expected_act_labels(game_id, "en" if self.ui_lang == "en" else "zh_tw")
+        # 間歇 / 終局的标签取骨架最后两项（PoE2 才有間歇）
+        interlude_label = (
+            self._t("act_interlude")
+            if any(kind == "interlude" for kind, _ in slots)
+            else "间歇"
+        )
+        endgame_label = self._t("act_endgame")
 
         rows: list[dict] = []
         current_index = 0
-        for act_number in range(1, total_acts + 1):
-            act_split = by_act.get(act_number)
-            ref_sec = ref_acts.get(act_number)
-            is_current = act_number == current_act
-            label = act_labels[act_number - 1] if act_number <= len(act_labels) else f"Act {act_number}"
+        for slot_index, (kind, key) in enumerate(slots):
+            if kind == "act":
+                act_number = int(key)
+                act_split = by_act.get(act_number)
+                ref_sec = ref_acts.get(act_number)
+                is_current = act_number == current_act and current_chapter == "act"
+                label = (
+                    act_labels[slot_index]
+                    if slot_index < len(act_labels)
+                    else f"Act {act_number}"
+                )
+            elif kind == "interlude":
+                act_split = interlude_split
+                ref_sec = ref_interlude if reference is not None else None
+                is_current = current_chapter == "interlude"
+                label = interlude_label
+            else:  # endgame
+                act_split = endgame_split
+                ref_sec = ref_endgame if reference is not None else None
+                is_current = current_chapter == "endgame"
+                label = endgame_label
+
             if act_split is None:
-                # 未到达的幕：占位但不计时
+                # 未到达的章节：占位但不计时
                 rows.append(
                     {
                         "name": label,
                         "time": "",
-                        "ref": format_duration(ref_sec) if ref_sec is not None else "",
+                        "ref": format_duration(ref_sec) if ref_sec else "",
                         "delta": "",
                         "status": "current" if is_current else "pending",
                     }
@@ -2976,7 +3045,7 @@ class RouteLensApp:
                 {
                     "name": label,
                     "time": format_duration(act_split.segment_seconds),
-                    "ref": format_duration(ref_sec) if ref_sec is not None else "",
+                    "ref": format_duration(ref_sec) if ref_sec else "",
                     "delta": format_delta(act_split.segment_seconds, ref_sec),
                     "status": "current" if is_current else "completed",
                 }
@@ -2984,18 +3053,6 @@ class RouteLensApp:
             if is_current:
                 current_index = len(rows) - 1
 
-        # 终局行（PoE1 = 2_11 卡鲁海滩；PoE2 = G_Endgame_Town）：单独一行，不计入任何幕
-        endgame = next((a for a in timing.acts if a.is_endgame), None)
-        if endgame is not None:
-            rows.append(
-                {
-                    "name": self._t("act_endgame"),
-                    "time": format_duration(endgame.segment_seconds),
-                    "ref": "",
-                    "delta": "",
-                    "status": "completed",
-                }
-            )
         return rows, current_index
 
     def _toggle_act_view(self) -> None:

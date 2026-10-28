@@ -140,6 +140,10 @@ class ActiveRun:
     is_paused: bool = False
     # 剧情已结束（PoE1 Act 10 奇塔弗）：出现后计时自动暂停
     campaign_over: bool = False
+    # 本次运行所属游戏（poe1 / poe2）。
+    # 必须跟随「所选路线 / 新建时点的那颗按钮」，不能用全局 config.game 兜底：
+    # 设置里默认 poe2，跑 PoE1 路线时会把 10 幕判成 4 幕、种子起点也种错。
+    game_id: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -154,6 +158,7 @@ class ActiveRun:
             "is_active": self.is_active,
             "is_paused": self.is_paused,
             "campaign_over": self.campaign_over,
+            "game_id": self.game_id,
         }
 
     @classmethod
@@ -170,6 +175,7 @@ class ActiveRun:
             is_active=bool(data.get("is_active", True)),
             is_paused=bool(data.get("is_paused", False)),
             campaign_over=bool(data.get("campaign_over", False)),
+            game_id=str(data.get("game_id", "") or ""),
         )
 
     @property

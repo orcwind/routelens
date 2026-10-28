@@ -775,14 +775,97 @@ class RouteLensSmokeTests(unittest.TestCase):
         finally:
             dispose_app(app)
 
+    def test_act_view_poe2_has_interlude_and_endgame_rows(self) -> None:
+        """PoE2 章节栏 = 第1..4章 + 間歇 + 終局（不是只有 4 幕）。
+
+        真机日志里 Act 4 之后走的是 P1_*/P2_*/P3_*（間歇），
+        旧实现把它们当「PoE1 移植区」丢掉，末段用时错算进第 4 章。
+        """
+        from routelens.gui import RouteLensApp
+        from routelens.models import ActiveRun, RunNode
+
+        app = RouteLensApp(root=shared_tk_root())
+        app.root.withdraw()
+        try:
+            app.ui_lang = "zh"
+            run = ActiveRun(
+                run_id="r2",
+                reference_route_id="ref2",
+                reference_route_name="测试",
+                game_id="poe2",
+                nodes=[
+                    RunNode(name="河岸", seconds=30.0, completed=True, area_id="G1_1"),
+                    RunNode(name="奧格姆宅第", seconds=60.0, completed=True, area_id="G4_15"),
+                    RunNode(name="火噬農地", seconds=120.0, completed=True, area_id="P1_1"),
+                    RunNode(name="奇瑪", seconds=90.0, completed=True, area_id="P2_6"),
+                ],
+            )
+            app._act_view = True
+            rows, current_index = app._build_act_rows(run)
+            names = [r["name"] for r in rows]
+            self.assertEqual(len(rows), 6)
+            self.assertEqual(names[-2:], ["間歇", "终局"])
+            # 間歇 = 120 + 90，没有被算进第 4 章
+            self.assertEqual(rows[-2]["time"], "03:30")
+            self.assertEqual(rows[3]["time"], "01:00")
+            # 当前在間歇 → 高亮間歇行
+            self.assertEqual(rows[current_index]["name"], "間歇")
+        finally:
+            dispose_app(app)
+
+    def test_act_view_ignores_unreached_reference_nodes(self) -> None:
+        """幕视图不能把还没跑到的参考节点算进幕（否则 Act 5..10 显示 00:00）。
+
+        真机事故 2026-10-28：Act 1 跑到第 5 个节点后，幕视图把整条 144 节点
+        参考路线都算成「已完成」，Act 5..10 显示 00:00。
+        """
+        from routelens.gui import RouteLensApp
+        from routelens.models import ActiveRun, RunNode
+
+        app = RouteLensApp(root=shared_tk_root())
+        app.root.withdraw()
+        try:
+            app.ui_lang = "zh"
+            run = ActiveRun(
+                run_id="r3",
+                reference_route_id="ref3",
+                reference_route_name="测试",
+                game_id="poe1",
+                nodes=[
+                    RunNode(name="The Coast", seconds=30.0, completed=True, area_id="1_1_2"),
+                    RunNode(name="The Mud Flats", seconds=60.0, completed=True, area_id="1_1_3"),
+                    # 还没跑到的参考节点
+                    RunNode(name="The Submerged Passage", completed=False, area_id="1_1_4"),
+                    RunNode(name="The Ledge", completed=False, area_id="1_1_5"),
+                    # 更远的 Act 5 参考节点
+                    RunNode(name="The Ascent", completed=False, area_id="1_5_1"),
+                ],
+                current_index=2,
+            )
+            app._act_view = True
+            rows, current_index = app._build_act_rows(run)
+            act1 = rows[0]
+            self.assertEqual(act1["time"], "01:30")
+            # 第 5 幕只有未跑到的参考节点 → 必须留空（pending），不能是 00:00
+            self.assertEqual(rows[4]["time"], "")
+            self.assertEqual(rows[4]["status"], "pending")
+            # 当前幕高亮在第 1 幕
+            self.assertEqual(rows[current_index]["name"], "第 1 幕")
+        finally:
+            dispose_app(app)
+
     def test_expected_act_labels(self) -> None:
         from routelens.act_timing import expected_act_labels
 
-        self.assertEqual(len(expected_act_labels("poe1", "en")), 10)
-        self.assertEqual(len(expected_act_labels("poe2", "en")), 4)
+        # PoE1：10 幕 + 剧情结束
+        self.assertEqual(len(expected_act_labels("poe1", "en")), 11)
+        # PoE2：第1..4章 + 間歇 + 終局（不是只有 4 幕）
+        self.assertEqual(len(expected_act_labels("poe2", "en")), 6)
         self.assertEqual(expected_act_labels("poe1", "en")[0], "Act 1")
         self.assertEqual(expected_act_labels("poe1", "zh_tw")[0], "第 1 幕")
         self.assertEqual(expected_act_labels("poe2", "zh_tw")[3], "第 4 幕")
+        self.assertEqual(expected_act_labels("poe2", "zh_tw")[4], "間歇")
+        self.assertEqual(expected_act_labels("poe2", "zh_tw")[5], "终局")
 
     def test_version_visible_in_route_picker_and_settings(self) -> None:
         """版本号必须在「选路线」页与「设置」页都可见（用户报 Bug 时要能直接报版本）。"""

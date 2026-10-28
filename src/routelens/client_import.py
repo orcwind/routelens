@@ -193,7 +193,8 @@ def has_campaign_start(splits: list[dict], game_id: str) -> bool:
 def _drop_non_campaign_splits(splits: list[dict], game_id: str) -> list[dict]:
     """丢弃非剧情节点（PoE2 的异界地图 / 精华 / 禁區 / PoE1 移植区 …）。
 
-    * **PoE2**：``G<1..4>_*`` 之外的 area id 一律不是剧情。
+    * **PoE2**：``G<1..4>_*``（主四幕）与 ``P<1..3>_*``（間歇）之外的 area id
+      一律不是剧情。
     * **PoE1**：剧情区域必然是 ``<幕>_<序号>…`` 形式（``1_1_2`` / ``2_10_9``）；
       其余命名区域是**联盟城镇 / 藏身处 / 兽栏 / 矿井**等非剧情区
       （实测 2026-10 真机日志里有 ``KalguuranSettlersLeague`` 君锋镇、

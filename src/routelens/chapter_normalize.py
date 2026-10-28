@@ -16,6 +16,16 @@ POE2_IGNORED_CHAPTER_LABELS: frozenset[str] = frozenset(
     {"第六章", "Act 6", "第六章", "第6章", "Chapter 6"}
 )
 
+# PoE2 的「間歇（Interlude）」—— 第 4 章之后、終局之前的一段。
+# 游戏内章节切换栏：第1章 第2章 第3章 第4章 間歇 終局
+# 日志里这一段的 `[SCENE]` 章节行就是「幕間章」。
+POE2_INTERLUDE_LABELS: frozenset[str] = frozenset(
+    {"間歇", "间歇", "幕間章", "幕间章", "Interlude"}
+)
+POE2_INTERLUDE_CANONICAL = "間歇"
+# 排序槽位：排在第五章之后、任何无法识别的标签之前
+_INTERLUDE_ORDER_INDEX = 6
+
 POE2_ALL_CHAPTER_NAMES: frozenset[str] = frozenset(
     {
         *POE2_CHAPTER_ORDER,
@@ -60,6 +70,8 @@ def normalize_poe2_chapter(name: str) -> str | None:
     raw = (name or "").strip()
     if not raw or raw in POE2_IGNORED_CHAPTER_LABELS:
         return None
+    if raw in POE2_INTERLUDE_LABELS:
+        return POE2_INTERLUDE_CANONICAL
 
     direct = _CHAPTER_ALIAS_TO_CANONICAL.get(raw)
     if direct:
@@ -88,6 +100,8 @@ def _chapter_index_to_canonical(index: int) -> str | None:
 
 def chapter_display_name(canonical: str, locale: str) -> str:
     """按界面语言显示章节名。"""
+    if canonical == POE2_INTERLUDE_CANONICAL:
+        return "Interlude" if locale == "en" else POE2_INTERLUDE_CANONICAL
     if canonical not in POE2_CHAPTER_ORDER:
         # PoE1 的「第7章」等：英文界面显示 Act 7
         match = _CHAPTER_NUM_RE.match(canonical or "")
@@ -137,6 +151,9 @@ def chapter_sort_index(chapter: str) -> int:
     raw = str(chapter or "").strip()
     if not raw:
         return 10**6
+    # 間歇排在最后一幕之后、終局之前
+    if raw in POE2_INTERLUDE_LABELS:
+        return _INTERLUDE_ORDER_INDEX
     match = _CHAPTER_NUM_ANY_RE.match(raw)
     if match:
         return int(match.group(1))

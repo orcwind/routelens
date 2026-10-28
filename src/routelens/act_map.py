@@ -17,15 +17,20 @@ PoE1 —— area id 形如 ``X_Y``（``1_1`` … ``2_11``）：
 
 PoE2 —— area id 形如 ``G<act>_<sub>``：
     * ``G1_*`` … ``G4_*`` = Act 1 … Act 4
-    * ``G_Endgame_Town``  = 金字塔避难所 = **剧情结束**
+    * ``P1_*`` … ``P3_*`` = **間歇（Interlude）**，Act 4 之后、終局之前的一段
+    * ``G_Endgame_Town``  = 金字塔避难所 = **剧情结束（終局）**
     * ``Map*``            = **异界地图**
     * ``Expedition*``     = 精华地图（支线内容，不是剧情也不是终局）
     * ``Incursion*``      = 禁區（支线内容）
-    * ``P<n>_*``          = PoE1 移植区域（不属于 PoE2 剧情）
+
+PoE2 **章节栏**（与游戏内一致，见 :func:`chapter_slots`）：
+
+    第1章 第2章 第3章 第4章 間歇 終局
 
 PoE2 **剧情区域判定**（导入开荒路线时用）：
 
-    剧情 = area id 匹配 ``G<1..4>_*``（含 ``G<n>_town`` 城镇）。
+    剧情 = area id 匹配 ``G<1..4>_*``（含 ``G<n>_town`` 城镇）
+    + 間歇 ``P<1..3>_*``（PoE2 第 4 章之后、終局之前的一段）。
     以下**一律不是剧情**，不得进入开荒路线：
 
     * ``Map*``                       异界地图
@@ -34,7 +39,6 @@ PoE2 **剧情区域判定**（导入开荒路线时用）：
     * ``Abyss*``                     深渊
     * ``Sanctum_*``                  试炼内部房间
     * ``Delirium*`` / ``Ritual*``    特殊地图
-    * ``P<n>_*``                     PoE1 移植区域（``P1_Town`` / ``P2_1`` …）
     * ``Hideout*``                   藏身处
 """
 
@@ -73,8 +77,9 @@ _POE2_NON_CAMPAIGN_PREFIXES = (
     "ChayulaLeague",  # 剧情外赛季 boss 区域
     "BreachDomain_",  # 裂隙
 )
-# PoE1 移植区（P1_Town / P2_1 / P3_Town …）不属于 PoE2 剧情
-_POE2_PORTED_TOWN_RE = re.compile(r"^P\d+_")
+# PoE1 移植区（P1_Town / P2_1 / P3_Town …）**不是**非剧情 ——
+# PoE2 的「間歇（Interlude）」就是重走这些区域（实测 22 个，见 INTERLUDE 注释）。
+_POE2_INTERLUDE_RE = re.compile(r"^P\d+(?:_|$)")
 
 # PoE1：剧情区域必然是 ``<幕>_<序号>…``（1_1_2 / 2_10_9 / 1_2_14_2）。
 _POE1_CAMPAIGN_AREA_RE = re.compile(r"^\d+_\d+")
@@ -88,7 +93,7 @@ POE1_CAMPAIGN_END_ACT = 11
 class ActInfo:
     """一次到访的归属：哪一幕 / 是否剧情已结束 / 是否支线。"""
 
-    __slots__ = ("act", "area_id", "campaign_over", "is_side", "is_map")
+    __slots__ = ("act", "area_id", "campaign_over", "is_side", "is_map", "is_interlude")
 
     def __init__(
         self,
@@ -98,17 +103,21 @@ class ActInfo:
         campaign_over: bool = False,
         is_side: bool = False,
         is_map: bool = False,
+        is_interlude: bool = False,
     ) -> None:
         self.act = act
         self.area_id = area_id
         self.campaign_over = campaign_over
         self.is_side = is_side
         self.is_map = is_map
+        self.is_interlude = is_interlude
 
     @property
     def label(self) -> str:
         if self.campaign_over:
             return "剧情结束"
+        if self.is_interlude:
+            return "間歇"
         if self.act is not None:
             return f"Act {self.act}"
         if self.is_map:
@@ -150,6 +159,14 @@ def _poe2_info(area_id: str) -> ActInfo:
         return ActInfo(None, aid, is_side=True)
     if aid == "G_Endgame_Town":
         return ActInfo(None, aid, campaign_over=True)
+    # 間歇（Interlude）：Act 4 之后、終局之前的一段。
+    # 实测 22 个区域，GGG 内部用 PoE1 移植前缀 P1_*/P2_*/P3_*：
+    #   P1 = 火噬農地 → 狼之要塞 → 霍爾登宅第（庇護所）
+    #   P2 = 卡里交匯道 → 奇瑪水源地（卡里市集）
+    #   P3 = 灰燼森林 → 庫阿西克寶庫（林間空地）
+    # 日志里这一段的章节行就是「幕間章」。
+    if _POE2_INTERLUDE_RE.match(aid):
+        return ActInfo(None, aid, is_interlude=True)
     match = _POE2_ACT_ID_RE.match(aid)
     if not match:
         return ActInfo(None, aid, is_side=True)
@@ -193,6 +210,50 @@ def act_count(game_id: str) -> int:
     return 0
 
 
+def chapter_slots(game_id: str) -> list[tuple[str, str]]:
+    """章节切换栏的完整条目（与游戏内一致）。
+
+    PoE2 不只有 4 幕 —— 实测游戏内章节栏为：
+
+        第1章 第2章 第3章 第4章 間歇 終局
+
+    返回 ``[(kind, key), ...]``，kind ∈ {"act", "interlude", "endgame"}；
+    act 的 key 是幕号字符串（"1".."10"），interlude / endgame 的 key 为 ""。
+    """
+    game = str(game_id or "").strip().lower()
+    if game == "poe2":
+        slots: list[tuple[str, str]] = [
+            ("act", str(n)) for n in range(1, POE2_ACT_COUNT + 1)
+        ]
+        slots.append(("interlude", ""))
+        slots.append(("endgame", ""))
+        return slots
+    if game == "poe1":
+        slots = [("act", str(n)) for n in range(1, POE1_ACT_COUNT + 1)]
+        # PoE1 也有剧情结束点（2_11_endgame_town 卡鲁海滩），单独一行
+        slots.append(("endgame", ""))
+        return slots
+    return []
+
+
+def infer_game_from_area_id(area_id: str) -> str:
+    """由 area id 形态反推游戏（``1_1_1`` → poe1，``G1_1`` → poe2）。
+
+    这是**最硬的身份证据**：设置里的「当前游戏」是全局默认值，
+    用户同时有 PoE1 / PoE2 路线时，按设置判会把 PoE1 的 10 幕显示成 4 幕。
+    """
+    aid = (area_id or "").strip()
+    if not aid:
+        return ""
+    if aid.startswith(_POE1_MAP_PREFIXES):
+        return "poe1"
+    if _POE1_ACT_ID_RE.match(aid):
+        return "poe1"
+    if aid == "G_Endgame_Town" or _POE2_ACT_ID_RE.match(aid):
+        return "poe2"
+    return ""
+
+
 _CHINESE_NUMERALS = ("零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十")
 
 
@@ -208,15 +269,18 @@ def _chinese_numeral(value: int) -> str:
 
 
 def act_chapter_label(area_id: str, game_id: str) -> str:
-    """该 area id 所属的章节标签（``第一章`` … ``第十章``）；非剧情返回空串。
+    """该 area id 所属的章节标签；非剧情返回空串。
 
     PoE1 的 Client.txt **没有章节行**（``[SCENE] Set Source`` 只有区域名，
     实测 2026-10 真机日志无「第一章」/「Act 1」），因此章节只能由 area id 推出。
     PoE2 有 ``[SCENE]`` 章节行，但仍可作交叉校验。
 
     标签格式与界面既有章节名一致（中文数字）：``第一章`` / ``第十章``。
+    PoE2 的間歇（Act 4 之后）返回 ``間歇``。
     """
     info = detect_act(area_id, game_id)
+    if info.is_interlude:
+        return "間歇"
     if info.act is None:
         return ""
     return f"第{_chinese_numeral(info.act)}章"
@@ -233,9 +297,17 @@ def is_endgame_map_area_id(area_id: str, game_id: str) -> bool:
 
 
 def is_poe2_campaign_area_id(area_id: str) -> bool:
-    """该 area id 是否是 **PoE2 剧情区域**（开荒路线只应包含这些）。
+    """该 area id 是否属于 **PoE2 剧情**（开荒路线只应包含这些）。
 
-    判定 = area id 形如 ``G<1..4>_*``（含 ``G<n>_town`` 城镇）。
+    PoE2 剧情 = 主四幕 + 間歇 + 終局，对照游戏内章节切换栏：
+
+        第1章 第2章 第3章 第4章 間歇 終局
+
+    * ``G<1..4>_*``   主四幕（含 ``G<n>_town`` 城镇）
+    * ``P<1..3>_*``   **間歇（Interlude）** —— 实测 22 个区域：
+      P1 火噬農地 → 霍爾登宅第、P2 卡里交匯道 → 奇瑪水源地、
+      P3 灰燼森林 → 庫阿西克寶庫。这一段日志里的章节行是「幕間章」。
+    * ``G_Endgame_Town`` 終局（剧情结束点，单独判定）
 
     明确**不是**剧情的（实测自真实 Client.txt，2026-10）：
 
@@ -246,9 +318,6 @@ def is_poe2_campaign_area_id(area_id: str) -> bool:
     * ``Sanctum_*``          试炼内部房间
     * ``Delirium*`` / ``Ritual*``
     * ``Hideout*``           藏身处
-    * ``P<n>_*``             PoE1 移植区域（``P1_Town`` / ``P2_1`` …）
-
-    ``G_Endgame_Town``（剧情结束）单独处理：它是终点，不是剧情区域。
     """
     aid = (area_id or "").strip()
     if not aid:
@@ -257,8 +326,8 @@ def is_poe2_campaign_area_id(area_id: str) -> bool:
         return False
     if aid.startswith(_POE2_NON_CAMPAIGN_PREFIXES):
         return False
-    if _POE2_PORTED_TOWN_RE.match(aid):
-        return False
+    if _POE2_INTERLUDE_RE.match(aid):
+        return True
     match = _POE2_ACT_ID_RE.match(aid)
     if not match:
         return False

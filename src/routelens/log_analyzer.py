@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -71,6 +72,11 @@ class LogRunSession:
     ended_at: datetime | None = None
     # 归属游戏（poe1 / poe2）：试炼结构按游戏不同
     game_id: str = ""
+    # 离开世界（回登录 / 选角）的时刻。
+    # Client.txt 里没有「登录时角色名」，切换账号/角色只能看到
+    # [SCENE] Set Source [(null)] + [(unknown)] 然后重新登录。
+    # 这段离开的墙钟时间不能算进上一区域的用时，也不能算进新登录的加载时间。
+    world_left_at: list[datetime] = field(default_factory=list)
 
     @property
     def chapter_label(self) -> str:
@@ -118,8 +124,11 @@ class LogRunSession:
             if chapters_filter is not None and visit.chapter not in chapters_filter:
                 continue
             if splits and last_time is not None:
+                # 途中若离开过世界（回登录 / 换角色），该段用时到离开为止；
+                # 离开→重新登录的空档既不属于上一区，也不属于下一区。
+                segment_end = self._logout_between(last_time, visit.timestamp)
                 splits[-1].segment_seconds = max(
-                    0.0, (visit.timestamp - last_time).total_seconds()
+                    0.0, (segment_end - last_time).total_seconds()
                 )
             splits.append(
                 SplitNode(
@@ -154,6 +163,19 @@ class LogRunSession:
             first_index_by_identity[identity] = index
 
         return [s for s in splits if s.merged_into is None]
+
+    def _logout_between(self, start: datetime, end: datetime) -> datetime:
+        """start→end 之间第一次离开世界的时刻；没有离开则返回 end。"""
+        index = bisect.bisect_left(self.world_left_at, start)
+        if index < len(self.world_left_at):
+            left = self.world_left_at[index]
+            if left < end:
+                return left
+        return end
+
+    def _left_world_between(self, start: datetime, end: datetime) -> bool:
+        """start→end 之间是否离开过世界（用于判断「重新登录」而非「同一次停留」）。"""
+        return self._logout_between(start, end) < end
 
     def _fold_trials(self, splits: list[SplitNode]) -> list[SplitNode]:
         """把试炼里的房间折叠进「进门那一次」。
@@ -444,6 +466,8 @@ def analyze_client_log(
     pending_area_id = ""
     # 当前这批 Generating 的真实区域名是否已取过（一批只算一个区域）
     scene_consumed = False
+    # 上一次 [SCENE] Set Source [(null)] 的时刻（用于识别「离开世界」成对信号）
+    pending_null_at: datetime | None = None
     # 本行所属的 client 进程号：99999 等非主进程会写入与玩家无关的场景名
     line_client_id = ""
 
@@ -477,6 +501,7 @@ def analyze_client_log(
         if generating:
             pending_area_id = generating.group(1).strip()
             scene_consumed = False
+            pending_null_at = None
 
         timestamp = parse_timestamp(line)
         if timestamp is None:
@@ -485,6 +510,20 @@ def analyze_client_log(
         scene_chapter = SCENE_RE.search(line)
         if scene_chapter:
             raw_name = scene_chapter.group(1).strip()
+            # 离开世界（回登录 / 选角）：[SCENE] Set Source [(null)] 紧跟 [(unknown)]。
+            # 实测 PoE1 254 次、PoE2 143 次成对出现，之后 96%+ 都是重新登录。
+            if raw_name == "(null)":
+                pending_null_at = timestamp
+            elif raw_name == "(unknown)":
+                # (unknown) = 离开世界（回登录 / 选角 / 崩溃 / 关机）。
+                # 实测之后紧跟重新登录：PoE1 76/76，PoE2 388/391。
+                # 紧邻前面的 (null) 时刻更准（离开瞬间），否则用 (unknown) 本身。
+                left_at = timestamp
+                if pending_null_at is not None:
+                    if (timestamp - pending_null_at).total_seconds() <= 5:
+                        left_at = pending_null_at
+                    pending_null_at = None
+                current.world_left_at.append(left_at)
             if game_id == "poe2" or game_id is None:
                 from .chapter_normalize import normalize_poe2_chapter
 
@@ -526,7 +565,11 @@ def analyze_client_log(
             continue
 
         if current.visits and current.visits[-1].area == area:
-            continue
+            # 同名区域直接跳过（同一次停留里的重复事件）。
+            # 但「离开世界后重新登录又进同一区」是**另一段停留**，必须记账：
+            # 否则切账号/重启后回到同一区的用时会被整段吞掉。
+            if not current._left_world_between(current.visits[-1].timestamp, timestamp):
+                continue
 
         # 区域进入事件消费掉待配对的 area id（生成即消费，之后回城不再复用）
         area_id = pending_area_id

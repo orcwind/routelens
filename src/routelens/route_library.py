@@ -107,6 +107,62 @@ def _collect_chapters(*routes_or_sessions: dict) -> list[str]:
     return sort_chapters(chapters)
 
 
+def _order_splits_by_act(splits: list[dict], game_id: str) -> list[dict]:
+    """把节点按章节归位；同一章内保持首次出现的先后顺序。
+
+    多会话合并是「按时间顺序 append」的，退出游戏再上线那段会接在后面 ——
+    于是出现结构性错位。真机证据（2026-10-27 用户日志 ``bafawefasdf``）：
+
+        33 1_3_1       The City of Sarn      ← Act 3
+        34 1_4_town    Highgate              ← Act 4 **插在 Act 3 中间**
+        35 1_3_town    The Sarn Encampment   ← Act 3 还没跑完
+
+    幕号是 area id 里写死的，不依赖玩家路线，所以按幕重排不会打乱真实顺序：
+    已经有序的路线排序后完全不变（稳定排序）。
+
+    **間歇（PoE2）** 同样要归位：它排在 Act 4 之后（内部槽位 = 5），
+    组内按 ``P1 → P2 → P3``、每组内 ``Town → _1 → _2 …`` 排。
+    真机证据（``azdasfasdfsa``）合并后 P3 跑到了 P1 前面。
+
+    无幕号的节点（升华试炼 ``Labyrinth_Airlock``、支线）跟随它前一个节点的幕，
+    保持相对位置，不会被甩到末尾。
+    """
+    if len(splits) < 2:
+        return splits
+    from .act_map import detect_act
+
+    keyed: list[tuple[tuple[int, int, int], int, dict]] = []
+    last_key = (0, 0, 0)
+    for index, split in enumerate(splits):
+        area_id = str(split.get("area_id") or "")
+        info = detect_act(area_id, game_id)
+        if info.act is not None:
+            key = (info.act, 0, 0)
+        elif info.campaign_over:
+            # 終局 = 剧情终点，永远排最后
+            key = (6, 0, 0)
+        elif info.is_interlude:
+            # P1_Town / P2_6 …：组号 + 组内序号（Town 视为组起点 0）
+            parts = area_id.split("_")
+            group = 0
+            if len(parts) >= 1 and parts[0][1:].isdigit():
+                group = int(parts[0][1:])
+            seq = 0
+            if len(parts) >= 2:
+                head = parts[1]
+                if head.isdigit():
+                    seq = int(head) + 1  # Town(0) 排在 _1 之前
+                elif head.lower() == "town":
+                    seq = 0
+            key = (5, group, seq)
+        else:
+            key = last_key
+        last_key = key
+        keyed.append((key, index, split))
+    keyed.sort(key=lambda item: (item[0], item[1]))
+    return [item[2] for item in keyed]
+
+
 def _merge_splits(
     existing: list[dict],
     new: list[dict],
@@ -248,6 +304,10 @@ def merge_session_dicts(
             route["session_ids"].append(int(session_id))
     route["last_played_at"] = ordered[-1].get("ended_at") or ordered[-1].get("started_at")
     route["chapters"] = _collect_chapters(*ordered)
+    # 多段会话拼接后按幕归位：退出再上线那段会接在末尾，
+    # 出现「Act 4 城镇夹在 Act 3 中间」这种结构性错位（见 _order_splits_by_act）。
+    if len(ordered) > 1:
+        route["splits"] = _order_splits_by_act(route.get("splits") or [], game_id)
     return _finalize_route_metrics(route)
 
 
