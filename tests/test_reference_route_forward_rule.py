@@ -232,6 +232,134 @@ class BlankRouteRuleTests(_Case):
         self.assertNotIn("Lush Hideout", [n.name for n in run.nodes])
 
 
+class ResetRunKeepsReferenceModeTests(_Case):
+    """真机事故 2026-10-29 14:16：重置 Run 后必须仍是**参考路线模式**。
+
+    事故现象：点「重置 Run」后再也不换节点 —— 26 分钟全堆在 node 0。
+
+    根因：``reset_run()`` 构造 ``ActiveRun`` 时漏传 ``is_reference_mode``
+    → 落回 ``False``，但 ``nodes`` 仍是 145 个参考节点
+    → 走新建路线分支 → 每个区域都被 ``_find_revisited_node``
+    判成「重复进入已去过的地点」→ 永不换节点。
+    """
+
+    def test_reset_keeps_reference_mode(self) -> None:
+        self.engine.new_run(self._reference(["A", "B", "C", "D", "E"]))
+        self.engine.simulate_area("A", write_client=False)
+        self.engine.simulate_area("B", write_client=False)
+
+        self.engine.reset_run()
+
+        run = self.engine.active_run
+        assert run is not None
+        self.assertTrue(
+            run.is_reference_mode,
+            "重置后仍是参考路线模式（有参考节点就不该退回新建路线模式）",
+        )
+        self.assertEqual(len(run.nodes), 5, "重置后节点集合仍等于参考路线")
+        self.assertEqual(run.current_index, 0, "重置后回到起点")
+
+    def test_reset_then_areas_advance_nodes(self) -> None:
+        """重置后再进图 → 节点必须继续推进（事故的直接复现路径）。"""
+        self.engine.new_run(self._reference(["A", "B", "C", "D", "E"]))
+        self.engine.simulate_area("A", write_client=False)
+        self.engine.reset_run()
+
+        self.engine.simulate_area("A", write_client=False)
+        self.engine.simulate_area("B", write_client=False)
+        self.engine.simulate_area("C", write_client=False)
+
+        run = self.engine.active_run
+        assert run is not None
+        self.assertEqual(run.current_index, 2, "重置后节点必须继续推进（C）")
+        self.assertEqual(len(run.nodes), 5, "不该新增节点")
+
+    def test_reset_preserves_area_id(self) -> None:
+        """重置后参考节点要保住 area_id（精确匹配靠它）。"""
+        from routelens.models import ReferenceRoute, RouteNode
+
+        route = ReferenceRoute(
+            route_id="ref-area",
+            name="area",
+            nodes=[
+                RouteNode(name="A", seconds=10.0, area_id="1_1_1"),
+                RouteNode(name="B", seconds=10.0, area_id="1_1_2"),
+            ],
+        )
+        self.engine.new_run(route)
+        self.engine.reset_run()
+
+        run = self.engine.active_run
+        assert run is not None
+        self.assertEqual(run.nodes[0].area_id, "1_1_1")
+        self.assertEqual(run.nodes[1].area_id, "1_1_2")
+
+    def test_reset_preserves_game_id(self) -> None:
+        """重置后要保住 game_id（否则幕归属判错）。"""
+        self.engine.new_run(self._reference(["A", "B"]))
+        self.engine.reset_run()
+
+        run = self.engine.active_run
+        assert run is not None
+        self.assertEqual(run.game_id, "poe1", "重置后 game_id 不能丢")
+
+
+class CorruptedModeHealsOnLoadTests(unittest.TestCase):
+    """存档自愈：``is_reference_mode`` 与事实矛盾时以事实为准。
+
+    真机事故 2026-10-29 14:16：``reset_run()`` 漏传 ``is_reference_mode``
+    → 存档写成 ``False``，节点却还是 145 个参考节点
+    → 每次进图都被判成「重复进入已去过的地点」→ 永不换节点。
+    """
+
+    def test_false_mode_with_many_nodes_heals_to_true(self) -> None:
+        from routelens.models import ActiveRun
+
+        run = ActiveRun.from_dict(
+            {
+                "reference_route_id": "ref-1",
+                "reference_route_name": "long route",
+                "is_reference_mode": False,
+                "nodes": [
+                    {"name": "A", "seconds": None, "completed": False},
+                    {"name": "B", "seconds": None, "completed": False},
+                    {"name": "C", "seconds": None, "completed": False},
+                ],
+            }
+        )
+        self.assertTrue(run.is_reference_mode, "多节点 + 有 route_id → 应自愈为参考模式")
+
+    def test_free_run_with_many_nodes_stays_false(self) -> None:
+        """空白路线跑出多节点后**不能**被误判成参考模式。"""
+        from routelens.models import ActiveRun
+
+        run = ActiveRun.from_dict(
+            {
+                "reference_route_id": None,
+                "reference_route_name": "",
+                "is_reference_mode": False,
+                "nodes": [
+                    {"name": "Zone A", "seconds": 30.0, "completed": True},
+                    {"name": "Zone B", "seconds": 20.0, "completed": True},
+                ],
+            }
+        )
+        self.assertFalse(run.is_reference_mode, "空白路线（无 route_id）不能被自愈成参考模式")
+
+    def test_seed_only_run_stays_false(self) -> None:
+        """只有 1 个种子节点的 run → 仍是新建路线模式。"""
+        from routelens.models import ActiveRun
+
+        run = ActiveRun.from_dict(
+            {
+                "reference_route_id": None,
+                "is_reference_mode": False,
+                "nodes": [{"name": "河岸", "seconds": None, "completed": False}],
+            }
+        )
+        self.assertFalse(run.is_reference_mode)
+
+
 class RunNodeInvariantTests(unittest.TestCase):
     """``RunNode`` 唯一不变量：seconds 有值 ⇔ 本次到过；两者互斥。"""
 

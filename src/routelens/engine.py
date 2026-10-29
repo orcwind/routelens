@@ -426,16 +426,29 @@ class RunEngine:
             reference = self.store.get_route(self.active_run.reference_route_id)
         route_id = self.active_run.reference_route_id
         route_name = self.active_run.reference_route_name
+        run_game = self.active_run.game_id or self._run_game_id()
         now = datetime.now().isoformat(timespec="seconds")
         nodes: list[RunNode] = []
+        # 参考路线模式 = **本次运行有参考节点**（与 new_run 同一判据）。
+        # 注意：空白路线也带 route_id（标记来源），但它没有参考节点 → 不是参考模式。
+        has_reference_nodes = False
         if reference:
             nodes = [
-                RunNode(name=node.name, completed=False)
+                RunNode(name=node.name, completed=False, area_id=node.area_id)
                 for node in filter_hideout_nodes(reference.nodes)
             ]
+            has_reference_nodes = bool(nodes)
+        elif self.active_run.is_reference_mode and self.active_run.nodes:
+            # 原路线文件取不到了（被删 / 改名 / 路线列表刷新）→ 直接复用本次
+            # 运行的参考节点。重置 = 同一条路线清零，不是换一条路线。
+            nodes = [
+                RunNode(name=node.name, completed=False, area_id=node.area_id)
+                for node in self.active_run.nodes
+            ]
+            has_reference_nodes = bool(nodes)
         else:
             # 自由路线重置：同样回到第一幕固定起点
-            nodes = self._seed_campaign_start_nodes()
+            nodes = self._seed_campaign_start_nodes(run_game)
         self.active_run = ActiveRun(
             run_id=str(uuid.uuid4()),
             reference_route_id=route_id,
@@ -443,6 +456,11 @@ class RunEngine:
             nodes=nodes,
             started_at=now,
             is_paused=True,
+            game_id=run_game,
+            # 真机事故 2026-10-29 14:16：这里原本漏传 → 重置后 is_reference_mode=False，
+            # 但 nodes 仍是 145 个参考节点 → 走新建路线分支 → 每个区域都被
+            # 判成「重复进入已去过的地点」→ 永不换节点（26 分钟全堆在 node 0）。
+            is_reference_mode=has_reference_nodes,
         )
         self._timer_started_at = None
         self._last_area = ""

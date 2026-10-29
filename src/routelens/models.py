@@ -218,8 +218,15 @@ class ActiveRun:
         raw_mode = data.get("is_reference_mode")
         if raw_mode is None:
             # 老存档没有这个字段 → 按「有没有参考节点」推断
-            # （空白路线有 route_id 但没有节点 → 不是参考模式）
-            raw_mode = bool(data.get("reference_route_id")) and bool(nodes)
+            # （空白路线有 route_id 但只有 1 个种子节点 → 不是参考模式）
+            raw_mode = bool(data.get("reference_route_id")) and len(nodes) > 1
+        elif not raw_mode and data.get("reference_route_id") and len(nodes) > 1:
+            # 自愈：字段说「新建路线模式」，但存档里明明有多个参考节点。
+            # 真机事故 2026-10-29 14:16：reset_run() 漏传 is_reference_mode
+            # → 存档被写成 False，节点却还是 145 个参考节点
+            # → 每次进图都被判成「重复进入已去过的地点」→ 永不换节点。
+            # 字段与事实矛盾时**以事实为准**：多节点 + 有 route_id = 参考路线模式。
+            raw_mode = True
         return cls(
             run_id=str(data.get("run_id", "")),
             reference_route_id=data.get("reference_route_id"),
