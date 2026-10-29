@@ -3,7 +3,8 @@
 对应用户诉求：
 - 「我从 act3 回到了 act1」→ 回退到已去过的地点不该产生新节点
 - 「同一幕我来回在两个地点来回」→ 重复地点不该产生新节点
-- 重复进入的时间要并回原节点，不能凭空消失
+- 重复进入 → **当作没有换节点**：时间也不并回原节点，算在当前节点上
+  （用户 2026-10-29 定稿，与参考路线模式一致）
 """
 from __future__ import annotations
 
@@ -16,11 +17,11 @@ sys.path.insert(0, str(SRC_DIR))
 
 from routelens.config import load_routelens_config  # noqa: E402
 from routelens.engine import RunEngine  # noqa: E402
-from routelens.models import ReferenceRoute, RouteNode  # noqa: E402
+from routelens.models import ReferenceRoute  # noqa: E402
 
 
 class FreeRouteDedupeTests(unittest.TestCase):
-    """空白路线（无参考）下按实际进图记录，重复地点必须合并。"""
+    """空白路线（无参考）下按实际进图记录，重复地点不产生新节点。"""
 
     def _engine_with_blank_route(self) -> RunEngine:
         engine = RunEngine(load_routelens_config())
@@ -52,7 +53,13 @@ class FreeRouteDedupeTests(unittest.TestCase):
         # 同一幕内两个地点来回跑 → 只应保留两个节点
         self.assertEqual(names, ["Zone A", "Zone B"])
 
-    def test_revisit_keeps_time_in_original_node(self) -> None:
+    def test_revisit_does_not_move_time_to_original_node(self) -> None:
+        """重复进入已去过的地点：**时间不并回原节点**（用户 2026-10-29 定稿）。
+
+        新建路线模式下重复进入 → 当作没有换节点：
+        - 不新增节点
+        - 时间也**不**并回原节点 → 回访的停留时间算在**当前节点**上
+        """
         engine = self._engine_with_blank_route()
         engine.simulate_area("Zone A", write_client=False)
         engine.active_run.elapsed_seconds = 30.0
@@ -65,11 +72,17 @@ class FreeRouteDedupeTests(unittest.TestCase):
 
         run = engine.active_run
         assert run is not None
-        self.assertEqual(len(run.nodes), 2)
-        zone_a = run.nodes[0]
-        self.assertTrue(zone_a.completed)
-        # 30s（第一次停留） + 60s（回访时又待了 60s）合并到同一个节点
-        self.assertGreaterEqual(zone_a.seconds or 0.0, 30.0)
+        # 按名字定位索引，不依赖具体下标
+        zone_a_index = next(i for i, n in enumerate(run.nodes) if n.name == "Zone A")
+        zone_b_index = next(i for i, n in enumerate(run.nodes) if n.name == "Zone B")
+        self.assertEqual(len(run.nodes), 2, "重复不该新增节点")
+        zone_a = run.nodes[zone_a_index]
+        # 重复进入不换节点 → 当前节点仍是 Zone B
+        self.assertEqual(run.current_index, zone_b_index, "重复不该换节点")
+        # Zone A 只保留第一次停留的 30s —— 回访的 30s 没有并回它
+        self.assertLessEqual(zone_a.seconds or 0.0, 30.5)
+        # 回访期间的时间归当前节点（Zone B）—— 它尚未离开，时间在累计段里
+        self.assertGreater(engine.current_segment_seconds(), 0.0)
 
     def test_area_id_identity_distinguishes_same_name(self) -> None:
         """同名但 area_id 不同 = 不同区域实例，不能合并。

@@ -28,12 +28,11 @@ from unittest.mock import PropertyMock, patch
 SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SRC_DIR))
 
-from routelens.act_map import detect_act  # noqa: E402
 from routelens.act_timing import build_act_timing  # noqa: E402
 from routelens.companion_config import CompanionConfig  # noqa: E402
 from routelens.config import load_routelens_config  # noqa: E402
 from routelens.engine import RunEngine  # noqa: E402
-from routelens.models import ActiveRun, ReferenceRoute, RouteNode  # noqa: E402
+from routelens.models import ActiveRun, ReferenceRoute, RouteNode, RunNode  # noqa: E402
 
 
 class _Case(unittest.TestCase):
@@ -129,7 +128,23 @@ class SkippedWithTimeTests(_Case):
         self.assertTrue(run.nodes[2].skipped)
 
     def test_repair_skipped_with_time_on_load(self) -> None:
-        """缺陷 1 的存量数据修复：历史 run 里的 skipped+有时间的节点要恢复。"""
+        """存量数据修复：历史 run 里的 skipped+有时间的节点要恢复。
+
+        两个入口都要覆盖：
+        1. ``RunNode.from_dict`` —— 读存档时迁移（真正的入口）
+        2. ``_repair_skipped_with_time`` —— 幂等自愈
+        """
+        raw = {
+            "name": "B",
+            "seconds": 20.0,
+            "completed": True,
+            "skipped": True,
+            "area_id": "1_1_2",
+        }
+        node = RunNode.from_dict(raw)
+        self.assertFalse(node.skipped, "有时间却标跳过 = 事实被写坏 → 按待过恢复")
+        self.assertEqual(node.seconds, 20.0)
+
         run = ActiveRun(
             run_id="r",
             reference_route_id="ref",
@@ -174,24 +189,26 @@ class ExactAreaIdMatchTests(_Case):
 
 
 class FreeNodeAreaIdTests(_Case):
-    """缺陷 3：分叉后追加的自由节点必须带 area id（否则判不出幕）。"""
+    """参考路线模式不存在「自由节点」——分叉概念已删除。
 
-    def test_diverged_free_nodes_carry_area_id(self) -> None:
+    保留这条是为了钉死：参考路线模式下**节点集合恒等于参考路线**，
+    不会因为走到参考外的地方而追加节点（那正是 2026-10-28 事故的机制）。
+    """
+
+    def test_reference_mode_never_appends_nodes(self) -> None:
         self.engine.new_run(self._reference([("A", "1_1_1"), ("B", "1_1_2"), ("C", "1_1_3")]))
         self.engine._inject_area_with_id("A", "1_1_1")
         self.engine._inject_area_with_id("B", "1_1_2")
 
-        # 两个未知区域 → 分叉
+        # 两个参考外的地方 → 仍不新增节点
         self.engine._inject_area_with_id("Unknown One", "1_2_9")
         self.engine._inject_area_with_id("Unknown Two", "1_2_10")
 
         run = self.engine.active_run
         assert run is not None
-        free = [n for n in run.nodes if n.area_id in {"1_2_9", "1_2_10"}]
-        self.assertEqual(len(free), 2, "自由节点应带 area id")
-        for node in free:
-            info = detect_act(node.area_id, "poe1")
-            self.assertEqual(info.act, 2, "自由节点应能判出幕")
+        self.assertEqual(len(run.nodes), 3, "参考模式不该新增节点")
+        self.assertEqual(run.current_index, 1, "不该换节点")
+        self.assertFalse(any(n.skipped for n in run.nodes))
 
 
 class ActSumMatchesTotalTests(_Case):

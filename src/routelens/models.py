@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 
 
 def format_duration(seconds: float) -> str:
@@ -95,6 +94,25 @@ class ReferenceRoute:
 
 @dataclass
 class RunNode:
+    """本次运行里的一个区域节点。
+
+    **不变量（唯一事实源）**：
+
+    ==========================  =========================================
+    ``seconds is not None``     本次运行在这个区域**待过**，时间在这里
+    ``skipped is True``         本次运行**没去过**这个区域
+    ==========================  =========================================
+
+    两者**互斥**：不允许出现「有 87 秒用时 + skipped」这种自相矛盾的状态。
+
+    真机事故 2026-10-28：跳段把玩家真跑过的 24 个节点标成 ``skipped=True``
+    却保留了 ``seconds`` → 统计时按 ``skipped`` 排除 → 28.3 分钟凭空消失
+    （总时间 1:06:37，幕行只显示 38 分钟）。
+
+    写入侧必须用 :meth:`mark_visited` / :meth:`mark_skipped`，
+    不要直接给 ``seconds`` / ``skipped`` 赋值。
+    """
+
     name: str
     seconds: float | None = None
     completed: bool = False
@@ -102,6 +120,23 @@ class RunNode:
     area_id: str = ""
     # 试炼进门节点：每次试炼都要记（area id 相同也不能去重）
     is_trial_entry: bool = False
+
+    @property
+    def visited(self) -> bool:
+        """本次运行是否真的在这个区域待过（时间存在即为待过）。"""
+        return self.seconds is not None
+
+    def mark_visited(self, seconds: float) -> None:
+        """记为「本次到过，用时 seconds 秒」。"""
+        self.seconds = max(0.0, float(seconds))
+        self.completed = True
+        self.skipped = False
+
+    def mark_skipped(self) -> None:
+        """记为「本次没去过」（跳过 / 未到达）。不得带用时。"""
+        self.completed = True
+        self.skipped = True
+        self.seconds = None
 
     def to_dict(self) -> dict:
         return {
@@ -114,13 +149,20 @@ class RunNode:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> RunNode:
+    def from_dict(cls, data: dict) -> "RunNode":
         raw = data.get("seconds")
+        seconds = float(raw) if raw is not None else None
+        skipped = bool(data.get("skipped", False))
+        # 迁移：违反不变量（**有实际用时**却标成跳过）的老存档 → 按「待过」处理。
+        # 真机事故 2026-10-28 的 24 个节点就是这种状态（28.3 分钟蒸发）。
+        # 判据用 ``> 0``：0 秒没有实际意义，历史数据里通常是「跳过」的占位。
+        if skipped and seconds is not None and seconds > 0:
+            skipped = False
         return cls(
             name=str(data.get("name", "")),
-            seconds=float(raw) if raw is not None else None,
-            completed=bool(data.get("completed", False)),
-            skipped=bool(data.get("skipped", False)),
+            seconds=seconds,
+            completed=bool(data.get("completed", False)) or seconds is not None,
+            skipped=skipped,
             area_id=str(data.get("area_id", "") or ""),
             is_trial_entry=bool(data.get("is_trial_entry", False)),
         )
@@ -144,6 +186,14 @@ class ActiveRun:
     # 必须跟随「所选路线 / 新建时点的那颗按钮」，不能用全局 config.game 兜底：
     # 设置里默认 poe2，跑 PoE1 路线时会把 10 幕判成 4 幕、种子起点也种错。
     game_id: str = ""
+    # **参考路线模式**（用户 2026-10-29 定稿规则）：
+    #   True  → 节点集合恒等于参考路线；不在「当前节点之后」的参考节点出现时，
+    #            时间记给当前节点，不新增节点、不存在「路线分叉」。
+    #   False → 新建路线模式：进哪记什么（但重复/藏身处仍按规则处理）。
+    #
+    # 判据是「**本次运行有没有参考节点**」，不是「有没有 reference_route_id」：
+    # 空白路线也会带一个 route_id（用来标记来源），但它没有参考节点。
+    is_reference_mode: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -159,15 +209,22 @@ class ActiveRun:
             "is_paused": self.is_paused,
             "campaign_over": self.campaign_over,
             "game_id": self.game_id,
+            "is_reference_mode": self.is_reference_mode,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> ActiveRun:
+        nodes = [RunNode.from_dict(item) for item in data.get("nodes", [])]
+        raw_mode = data.get("is_reference_mode")
+        if raw_mode is None:
+            # 老存档没有这个字段 → 按「有没有参考节点」推断
+            # （空白路线有 route_id 但没有节点 → 不是参考模式）
+            raw_mode = bool(data.get("reference_route_id")) and bool(nodes)
         return cls(
             run_id=str(data.get("run_id", "")),
             reference_route_id=data.get("reference_route_id"),
             reference_route_name=str(data.get("reference_route_name", "")),
-            nodes=[RunNode.from_dict(item) for item in data.get("nodes", [])],
+            nodes=nodes,
             current_index=int(data.get("current_index", 0)),
             current_area=str(data.get("current_area", "")),
             elapsed_seconds=float(data.get("elapsed_seconds", 0.0)),
@@ -176,6 +233,7 @@ class ActiveRun:
             is_paused=bool(data.get("is_paused", False)),
             campaign_over=bool(data.get("campaign_over", False)),
             game_id=str(data.get("game_id", "") or ""),
+            is_reference_mode=bool(raw_mode),
         )
 
     @property

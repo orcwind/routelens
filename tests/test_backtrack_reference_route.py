@@ -156,20 +156,31 @@ class BacktrackWithReferenceTests(_Case):
             "剩余参考节点不该被标成跳过",
         )
 
-    def test_two_distinct_unknown_areas_still_diverge(self) -> None:
-        """真正的路线分叉（两个不同的未知区域）仍然要能识别。"""
+    def test_two_distinct_unknown_areas_do_not_diverge(self) -> None:
+        """参考路线模式下**不存在「路线分叉」**（用户 2026-10-29 定稿）。
+
+        规则：只在「当前节点之后」找下一个参考节点；找不到 → 时间记给当前节点。
+        所以两个未知区域都应该归当前节点，**不新增节点、不作废剩余参考节点**。
+
+        这条替换了旧行为（旧：攒 2 个未知区域 → 判定分叉 → 追加自由节点 +
+        剩余参考节点全标 skipped）。旧行为正是 2026-10-28 那 28.3 分钟
+        用时蒸发的根因。
+        """
         self.engine.new_run(self._poe1_act1_route())
         self.engine._inject_area_with_id("The Submerged Passage", "1_1_4")
-        tail = len(self.engine.active_run.nodes)
+        run = self.engine.active_run
+        assert run is not None
+        tail = len(run.nodes)
+        current = run.current_index
+
         self.engine._inject_area_with_id("Unknown One", "1_1_8")
         self.engine._inject_area_with_id("Unknown Two", "1_1_9")
 
-        run = self.engine.active_run
-        assert run is not None
-        self.assertEqual(len(run.nodes), tail + 2, "应转为实际记录，追加两个节点")
-        self.assertTrue(
-            any(n.skipped for n in run.nodes),
-            "剩余参考节点应被标成跳过",
+        self.assertEqual(len(run.nodes), tail, "参考路线模式不该新增节点")
+        self.assertEqual(run.current_index, current, "不该换节点")
+        self.assertFalse(
+            any(n.skipped for n in run.nodes[current + 1:]),
+            "剩余参考节点不该被标成跳过",
         )
 
     def test_act6_same_name_is_not_treated_as_act1_backtrack(self) -> None:

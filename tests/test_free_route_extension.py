@@ -38,49 +38,50 @@ class _IsolatedEngineCase(unittest.TestCase):
 
 
 class ReferenceExhaustedTests(_IsolatedEngineCase):
-    def test_appends_nodes_after_reference_runs_out(self) -> None:
+    """参考路线跑完之后的行为（用户 2026-10-29 定稿规则）。
+
+    规则：参考路线模式下**永远不自由记录** —— 节点集合恒等于参考路线。
+    参考路线全部跑完后，玩家再进任何地方（回旧节点 / 藏身处 / 新地点），
+    时间都记给**最后一个参考节点**，不新增节点。
+    """
+
+    def test_no_nodes_appended_after_reference_runs_out(self) -> None:
         self.engine.new_run(self._reference(["A", "B", "C"]))
         for area in ("A", "B", "C"):
             self.engine.simulate_area(area, write_client=False)
 
         assert self.engine.active_run is not None
-        self.assertTrue(self.engine._can_free_record())
+        self.assertFalse(self.engine._can_free_record(), "参考模式不该自由记录")
 
         self.engine.simulate_area("D", write_client=False)
         self.engine.simulate_area("E", write_client=False)
 
         names = [node.name for node in self.engine.active_run.nodes]
-        self.assertEqual(names, ["A", "B", "C", "D", "E"])
-        # 最后一个节点是「当前正在计时」的节点
-        self.assertEqual(self.engine.active_run.current_index, 4)
-        self.assertFalse(self.engine.active_run.nodes[4].completed)
-        self.assertTrue(self.engine.active_run.nodes[3].completed)
-        self.assertIsNotNone(self.engine.active_run.nodes[3].seconds)
+        self.assertEqual(names, ["A", "B", "C"], "参考跑完后不该新增节点")
+        # 最后一个参考节点继续计时
+        self.assertEqual(self.engine.active_run.current_index, 2)
 
-    def test_free_nodes_get_their_own_seconds(self) -> None:
+    def test_time_after_reference_ends_goes_to_last_reference_node(self) -> None:
         self.engine.new_run(self._reference(["A"]))
         for area in ("A", "B", "C"):
             self.engine.simulate_area(area, write_client=False)
 
         assert self.engine.active_run is not None
         nodes = self.engine.active_run.nodes
-        self.assertEqual([n.name for n in nodes], ["A", "B", "C"])
-        self.assertTrue(nodes[0].completed)
-        self.assertTrue(nodes[1].completed)
-        self.assertIsNotNone(nodes[1].seconds)
+        self.assertEqual([n.name for n in nodes], ["A"])
+        # 参考跑完后：B、C 的停留时间都归 A（最后一个参考节点）
+        self.assertEqual(self.engine.active_run.current_index, 0)
+        self.assertEqual(len(nodes), 1, "不该新增节点")
+        # A 的用时在离开时才结算；这里直接验证「累计时间归 A」
+        self.assertGreater(self.engine.current_segment_seconds(), 0.0)
 
-    def test_recent_repeat_is_not_appended(self) -> None:
-        self.engine.new_run(self._reference(["A"]))
-        for area in ("A", "B", "C"):
-            self.engine.simulate_area(area, write_client=False)
-        # 回城 / 折返：刚跑过的区域不应变成新节点
-        self.engine.simulate_area("C", write_client=False)
-        self.engine.simulate_area("B", write_client=False)
+    def test_delta_keeps_growing_after_reference_ends(self) -> None:
+        """参考跑完后差值继续增长（后续时间算进最后一个参考节点）。
 
-        assert self.engine.active_run is not None
-        self.assertEqual([n.name for n in self.engine.active_run.nodes], ["A", "B", "C"])
-
-    def test_total_delta_freezes_after_reference_ends(self) -> None:
+        旧行为是「冻结差值」——因为旧逻辑把后续时间算到参考路线之外的
+        自由节点上，不参与参考对比。按新规则（后续时间归最后一个参考节点），
+        差值 = 本次总时间 - 参考总时间，会如实反映「你比参考慢了多少」。
+        """
         reference = self._reference(["A", "B"], seconds=100.0)
         self.engine.store.save_route(reference)
         self.engine.new_run(reference)
@@ -88,10 +89,12 @@ class ReferenceExhaustedTests(_IsolatedEngineCase):
         self.engine.simulate_area("B", write_client=False)
         self.engine.simulate_area("C", write_client=False)
 
-        frozen = self.engine.comparison_delta_seconds()
-        assert frozen is not None
+        first = self.engine.comparison_delta_seconds()
+        assert first is not None
         self.engine.simulate_area("D", write_client=False)
-        self.assertEqual(self.engine.comparison_delta_seconds(), frozen)
+        second = self.engine.comparison_delta_seconds()
+        assert second is not None
+        self.assertGreater(second, first, "后续时间应计入差值")
 
     def test_mid_reference_unknown_area_is_still_ignored(self) -> None:
         self.engine.new_run(self._reference(["A", "B", "C"]))
@@ -104,29 +107,36 @@ class ReferenceExhaustedTests(_IsolatedEngineCase):
 
 
 class DivergenceTests(_IsolatedEngineCase):
-    def test_divergence_after_two_unknown_areas(self) -> None:
+    """参考路线模式**不存在「路线分叉」**（用户 2026-10-29 定稿）。
+
+    规则：只在「当前节点之后」找下一个参考节点；找不到 → 时间记给当前节点。
+    节点集合恒等于参考路线：不新增、不作废。
+
+    旧行为（已删除）：攒 2 个未知区域 → 判定分叉 → 追加自由节点 +
+    剩余参考节点全标 skipped。正是 2026-10-28 那 28.3 分钟蒸发的根因。
+    """
+
+    def test_unknown_areas_do_not_diverge(self) -> None:
         self.engine.new_run(self._reference(["A", "B", "C", "D", "E"]))
         self.engine.simulate_area("A", write_client=False)
         self.engine.simulate_area("B", write_client=False)
 
-        # 走的不是参考那条路（跨幕 / 实际路线不同）：连续两个区域都不在参考里
+        # 走的不是参考那条路：连续两个区域都不在参考里
         self.engine.simulate_area("X1", write_client=False)
         self.engine.simulate_area("X2", write_client=False)
 
         assert self.engine.active_run is not None
         names = [n.name for n in self.engine.active_run.nodes]
-        self.assertEqual(names, ["A", "B", "C", "D", "E", "X1", "X2"])
-        self.assertTrue(self.engine.active_run.nodes[2].skipped)
-        self.assertTrue(self.engine.active_run.nodes[4].skipped)
-        self.assertTrue(self.engine.active_run.nodes[5].completed)
-        self.assertFalse(self.engine.active_run.nodes[6].completed)
+        self.assertEqual(names, ["A", "B", "C", "D", "E"], "不该新增节点")
+        self.assertFalse(any(n.skipped for n in self.engine.active_run.nodes))
+        self.assertEqual(self.engine.active_run.current_index, 1, "不该换节点")
 
     def test_single_unknown_area_then_back_is_not_divergence(self) -> None:
         self.engine.new_run(self._reference(["A", "B", "C", "D"]))
         self.engine.simulate_area("A", write_client=False)
         self.engine.simulate_area("B", write_client=False)
 
-        # 回城后回到参考路径：不应当成路线分叉
+        # 回城后回到参考路径
         self.engine.simulate_area("Unknown Town", write_client=False)
         self.engine.simulate_area("C", write_client=False)
 
@@ -135,13 +145,15 @@ class DivergenceTests(_IsolatedEngineCase):
             [n.name for n in self.engine.active_run.nodes], ["A", "B", "C", "D"]
         )
         self.assertFalse(any(n.skipped for n in self.engine.active_run.nodes))
+        # 回到参考路径后正常推进到 C
+        self.assertEqual(self.engine.active_run.current_index, 2)
 
     def test_recent_repeat_does_not_accumulate_divergence(self) -> None:
         self.engine.new_run(self._reference(["A", "B", "C", "D"]))
         self.engine.simulate_area("A", write_client=False)
         self.engine.simulate_area("B", write_client=False)
 
-        # 反复回城到刚跑过的区域：不应触发分叉
+        # 反复回城到刚跑过的区域
         for _ in range(3):
             self.engine.simulate_area("B", write_client=False)
             self.engine.simulate_area("A", write_client=False)

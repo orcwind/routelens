@@ -2332,7 +2332,7 @@ class RouteLensApp:
         self.engine._sync_elapsed()
         run = self.engine.active_run
         assert run is not None
-        completed = [n for n in run.nodes if n.completed and n.name]
+        completed = [n for n in run.nodes if n.visited and n.name]
         if not completed:
             messagebox.showinfo("提示", "还没有跑出任何节点。", parent=self.root)
             return
@@ -2873,17 +2873,21 @@ class RouteLensApp:
         self._split_page_var.set("")
 
     def _build_node_rows(self, run: ActiveRun) -> tuple[list[dict], int]:
-        """节点视图：逐区域一行。"""
+        """节点视图：逐区域一行。
+
+        取数口径（RunNode 唯一不变量）：``seconds is not None`` ⇔ 本次到过。
+        """
         rows: list[dict] = []
         for index, node in enumerate(run.nodes):
             ref_sec = self.engine.reference_seconds_at(index)
             ref_text = format_duration(ref_sec) if ref_sec is not None else ""
 
-            if node.completed and node.skipped:
+            if node.skipped:
+                # 本次没去过这个区域（手动跳过 / 跳段没跑到）
                 status = "skipped"
                 time_text = "—"
                 delta_text = ""
-            elif node.completed:
+            elif node.visited:
                 status = "completed"
                 time_text = format_duration(node.seconds or 0.0)
                 delta_text = format_delta(node.seconds or 0.0, ref_sec)
@@ -2961,16 +2965,19 @@ class RouteLensApp:
                     ref_endgame += act_split.segment_seconds
 
         # 本次运行的节点（已完成的用已计时；当前的用实时段）
+        #
+        # 取数口径（RunNode 唯一不变量）：``seconds is not None`` ⇔ 本次到过。
+        # 不再用「completed and not skipped」判断 —— 那个组合允许
+        # 「有 87 秒用时 + skipped」这种自相矛盾状态，正是 2026-10-28
+        # 那 28.3 分钟蒸发的根因。
         run_splits: list[dict] = []
         for index, node in enumerate(run.nodes):
-            if node.completed and node.skipped:
-                continue
             # 还没跑到的参考节点不能进幕计时：否则 Act 5..10 会显示 00:00
             # 并算作「已完成」，幕视图看起来像整条路线都跑完了。
-            if not node.completed and index != run.current_index:
+            if not node.visited and index != run.current_index:
                 continue
             seconds = node.seconds or 0.0
-            if index == run.current_index and not node.completed:
+            if index == run.current_index and not node.visited:
                 if self.engine.timer_running or run.is_paused:
                     seconds = self.engine.current_segment_seconds()
             run_splits.append(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -31,11 +31,8 @@ from .trial import detect_trial, trial_body_id, trial_node_name
 StateCallback = Callable[[ActiveRun | None], None]
 
 # 向前匹配窗口：超过这个距离的同名区域不认（PoE1 各 Act 有同名区域，防止误跳整幕）
+# 名字在整个路线里唯一时不受此限制；窗口外只认 area id 精确匹配。
 MAX_FORWARD_MATCH = 15
-
-# 连续 N 个「不在参考路线里」的区域 → 判定参考路线与实际路径已分叉
-# （跨幕 / 玩家走的不是同一条路），之后按实际进图记录
-FREE_RECORD_CONFIRM = 2
 
 
 class RunEngine:
@@ -64,8 +61,6 @@ class RunEngine:
         self._timer_started_at: datetime | None = None
         self._last_area = ""
         self._state_callback: StateCallback | None = None
-        # 参考路线里匹配不上、等待确认是否分叉的区域（(显示名, 进入时刻)）
-        self._pending_areas: list[tuple[str, datetime, str]] = []
         # 当前进行中的试炼（trial_id, 进门节点的 index）；离开试炼区域后清空
         self._active_trial: tuple[str, int] | None = None
         # 刚进入试炼、节点尚未建好时的标记（建好后补 index）
@@ -125,11 +120,13 @@ class RunEngine:
         self._sync_elapsed()
         now = datetime.now().isoformat(timespec="seconds")
         nodes: list[RunNode] = []
+        has_reference_nodes = False
         if reference:
             nodes = [
                 RunNode(name=node.name, completed=False, area_id=node.area_id)
                 for node in filter_hideout_nodes(reference.nodes)
             ]
+            has_reference_nodes = bool(nodes)
         # 本次运行的游戏归属：路线自带的优先，其次才用设置里的当前游戏。
         # 设置默认 poe2；跑 PoE1 路线时若按设置判，10 幕会被判成 4 幕。
         run_game = str(
@@ -138,6 +135,7 @@ class RunEngine:
         if not reference:
             # 自由路线（空白路线）：开荒必然从第一幕开始，第一幕起点是**固定**的。
             # 预置 node 0，玩家一进图就能对上；否则首个区域永远缺失。
+            # 注意：预置的种子节点**不算**参考节点 → 仍是新建路线模式。
             nodes = self._seed_campaign_start_nodes(run_game)
         run = ActiveRun(
             run_id=str(uuid.uuid4()),
@@ -146,11 +144,13 @@ class RunEngine:
             nodes=nodes,
             started_at=now,
             game_id=run_game,
+            # 参考路线模式 = **本次运行有参考节点**。
+            # 空白路线也带 route_id（标记来源），但它没有参考节点 → 新建路线模式。
+            is_reference_mode=has_reference_nodes,
         )
         self.active_run = run
         self._timer_started_at = None
         self._last_area = ""
-        self._pending_areas = []
         self._seed_claimed = False
         self._persist()
         self._emit_state()
@@ -179,7 +179,6 @@ class RunEngine:
         self.active_run = run
         self._timer_started_at = datetime.now() if not run.is_paused else None
         self._last_area = run.current_area
-        self._pending_areas = []
         self._persist()
         self._emit_state()
         return run
@@ -194,7 +193,6 @@ class RunEngine:
         self.active_run = run
         self._timer_started_at = None
         self._last_area = run.current_area
-        self._pending_areas = []
         self._persist()
         self._emit_state()
         return run
@@ -207,19 +205,23 @@ class RunEngine:
 
     @staticmethod
     def _repair_skipped_with_time(run: ActiveRun) -> None:
-        """修复历史数据：``skipped`` 却带真实用时的节点。
+        """修复违反不变量的历史数据：``skipped`` 却带真实用时的节点。
 
         真机事故 2026-10-28：跳段把玩家**真跑过**的 24 个节点标成 skipped，
         但保留了它们的 seconds。统计时 skipped 节点被排除 → 28.3 分钟凭空消失
         （总时间 1:06:37，幕行只显示 38 分钟）。
 
-        判据：``skipped=True`` 但 ``seconds > 0`` = 玩家确实在那儿待过，
-        属于「跑过」而不是「跳过」→ 取消 skipped 标记，时间重新计入。
+        判据（``RunNode`` 的唯一不变量）：``seconds is not None`` ⇔ 本次到过。
+        所以「有时间却标成跳过」= 事实被写坏了 → 按「到过」恢复。
+
+        ``RunNode.from_dict`` 也会做同样的迁移（存档读取时）；
+        这里是幂等自愈，覆盖其它入口构造的 run。
         """
         changed = 0
         for node in run.nodes:
-            if node.skipped and node.seconds and node.seconds > 0:
+            if node.skipped and node.seconds is not None and node.seconds > 0:
                 node.skipped = False
+                node.completed = True
                 changed += 1
         if changed:
             test_log.write(
@@ -284,6 +286,12 @@ class RunEngine:
         return self.store.create_route_from_run(name, nodes)
 
     def save_result_as_reference(self, result: RunResult, name: str) -> ReferenceRoute:
+        """把一次运行的结果存成新路线。
+
+        只收**本次真正到过**的节点（``seconds is not None``）。
+        跳过的 / 没跑到的参考节点不进新路线 —— 否则新路线会带上一堆
+        「玩家从没去过、用时 0」的节点。
+        """
         nodes = [
             RunNode(
                 name=node.name,
@@ -292,7 +300,7 @@ class RunEngine:
                 area_id=node.area_id,
             )
             for node in result.nodes
-            if node.completed and node.name
+            if node.seconds is not None and node.name
         ]
         return self.store.create_route_from_run(name, nodes)
 
@@ -438,7 +446,6 @@ class RunEngine:
         )
         self._timer_started_at = None
         self._last_area = ""
-        self._pending_areas = []
         self._seed_claimed = False
         self._persist()
         self._emit_state()
@@ -492,9 +499,7 @@ class RunEngine:
         if run.current_index >= len(run.nodes):
             return
         node = run.nodes[run.current_index]
-        node.completed = True
-        node.skipped = True
-        node.seconds = None
+        node.mark_skipped()
         run.current_index = self._next_uncompleted_index(run.current_index + 1)
         self._persist()
         self._emit_state()
@@ -625,7 +630,7 @@ class RunEngine:
             actual = sum(
                 float(node.seconds or 0.0)
                 for node in self.active_run.nodes[: len(ref_nodes)]
-                if node.completed and not node.skipped
+                if node.visited
             )
             return actual - ref_sum
         return self.elapsed_seconds() - ref_sum
@@ -641,9 +646,15 @@ class RunEngine:
         return self._areas_match(area, expected)
 
     def _completed_nodes(self) -> list[RunNode]:
+        """本次运行**真正到过**的节点（用于「存为路线」）。
+
+        按 RunNode 不变量判定：``seconds is not None`` ⇔ 本次到过。
+        没用过的节点（跳过的 / 没跑到的）不进新路线 —— 否则路线里会带上一堆
+        「玩家从没去过、用时 0」的节点。
+        """
         if not self.active_run:
             return []
-        return [node for node in self.active_run.nodes if node.completed and node.name]
+        return [node for node in self.active_run.nodes if node.visited and node.name]
 
     def _on_area_entered(self, event: GameEvent) -> None:
         if not self.has_active_run:
@@ -710,9 +721,14 @@ class RunEngine:
             self.active_run.current_area = ""
 
     def _segment_seconds(self, _timestamp: datetime) -> float:
+        """当前节点已累计的停留时长（总时间 - 已计入节点的用时之和）。
+
+        求和口径用 ``visited``（``seconds is not None``）——
+        这是「时间确实存在于某个节点」的唯一判据。
+        """
         assert self.active_run is not None
         completed_sum = sum(
-            node.seconds or 0.0 for node in self.active_run.nodes if node.completed
+            node.seconds or 0.0 for node in self.active_run.nodes if node.visited
         )
         return max(0.0, self.elapsed_seconds() - completed_sum)
 
@@ -745,7 +761,7 @@ class RunEngine:
     ) -> bool:
         assert self.active_run is not None
         display = self.display_name(area) or area
-        has_reference = bool(self.active_run.reference_route_id)
+        has_reference = self.active_run.is_reference_mode
         # 预置的第一幕起点：名字可能是回退译名，玩家真进图后按日志原文校正
         self._correct_seeded_node_name(area, area_id)
 
@@ -756,98 +772,97 @@ class RunEngine:
             return True
 
         # 回到已经去过的地点（从 Act 3 回 Act 1、同幕内来回跑）：
-        # 不新增节点，把停留时间并回原节点。
-        # 只在**自由记录**时生效 —— 有参考路线时由「向前匹配窗口」负责
-        # 回退识别（PoE1 的 Act 6 复用 Act 1 区域名，窗口规则已经处理过）。
+        # **当作没有换节点** —— 不新增节点，**时间也不并回原节点**，
+        # 这段时间算在**当前节点**上（与参考路线模式完全一致）。
+        #
+        # 用户 2026-10-29 定稿：
+        #   新建路线模式「是什么节点就记录什么」，但重复不新增节点，
+        #   时间也不并回重复节点，而是当作没有换节点。
+        #
         # 试炼进门例外：多次试炼的进门 area id 相同，每次都要记。
         if trial_info.in_trial:
             pass
-        elif not has_reference or self._can_free_record():
+        elif not has_reference:
             revisited = self._find_revisited_node(area, area_id)
             if revisited is not None and revisited != self.active_run.current_index:
-                self._close_current_node(segment_seconds)
-                return self._merge_into_revisited(revisited, segment_seconds)
+                # 重复进入已去过的地点 → 不换节点，时间留在当前节点
+                test_log.write(
+                    "RUN",
+                    "重复进入已去过的地点（不换节点）",
+                    area=area,
+                    display=display,
+                    revisited_index=revisited,
+                    current_index=self.active_run.current_index,
+                )
+                return True
 
         if self.active_run.nodes:
             match_index = self._find_forward_match(area, area_id)
             if match_index is None:
-                # 回退到**已经跑过**的地点（死亡回城 / 回去拿传送点 / 回旧幕补支线）：
-                # 这不是「路线分叉」，不能作废剩余参考节点。
-                # 真机事故 2026-10-28：Act 1 从 The Submerged Passage 回退到 The Coast
-                # （Act 6 也有同名区域，超出 15 节点窗口 → 找不到匹配）
-                # → 判定分叉 → 剩余 140 个参考节点全部被标成 skipped，
-                # 节点视图于是只剩前 5 个节点有用时、幕视图只到 Act 1。
+                # **参考路线模式的核心规则**（用户 2026-10-29 定稿）：
                 #
-                # 这里只「认出回退」，不把 current_index 往回拨：
-                # 回城期间时间继续算在当前节点上（既有语义，见
-                # test_respawn_town_does_not_jump_to_later_act）。
-                revisited = self._find_visited_match(area, area_id)
-                if (
-                    revisited is not None
-                    and not trial_info.in_trial  # 多次试炼每次都要单独记（trial 规则优先）
-                    and has_reference
-                    and not self._can_free_record()
-                ):
-                    self._pending_areas = []
+                #   参考路线 A B C D E，实际 A C B D E。
+                #   玩家在 C 时，只在「C 之后」（即 D、E）里找下一个参考节点。
+                #   找不到 → 这段时间**记给当前节点 C**，角色**不换节点**。
+                #
+                #   下面这些全都归 C：
+                #     - 回到 C 之前的节点（B / A）—— 它们在「C 之后」这个范围里没有记录
+                #     - 藏身处
+                #     - 参考路线里根本没有的新地点
+                #     - 参考路线已经全部跑完（当前节点 = 最后一个参考节点）
+                #
+                #   参考路线模式下**不新增任何节点、不作废任何参考节点、
+                #   不存在「路线分叉」这回事** —— 节点集合恒等于参考路线。
+                #
+                # 历史包袱（本次已删除的旧逻辑）：
+                #   真机事故 2026-10-28：旧逻辑攒 2 次「未知区域」就判定路线分叉
+                #   → 剩余 140 个参考节点全被标 skipped → 28.3 分钟用时蒸发。
+                if has_reference and not trial_info.in_trial:
+                    # 时间继续算在当前节点上：不换节点、不新增、不改任何标记。
                     test_log.write(
                         "RUN",
-                        "回退到已去过的地点（保持当前节点）",
-                        area=area,
-                        display=display,
-                        revisited_index=revisited,
-                        current_index=self.active_run.current_index,
-                    )
-                    return False
-                # 参考路线已跑完：关闭最后一个参考节点，之后按实际进图自由记录。
-                # （参考只提供已跑节点的时间基准，节点名由实际进图生成）
-                if self._can_free_record() and not (
-                    self._is_recent_repeat(area, area_id) and not trial_info.in_trial
-                ):
-                    self._close_current_node(segment_seconds)
-                    return self._append_free_node(area, display, area_id)
-                if self._track_divergence(area, display, segment_seconds, timestamp, area_id):
-                    return True
-                if has_reference:
-                    test_log.write(
-                        "RUN",
-                        "忽略进图（回退或未知道路）",
+                        "时间归当前节点（非后续参考节点）",
                         area=area,
                         display=display,
                         current_index=self.active_run.current_index,
                         timing=self.next_expected_area(),
                     )
-                return False
+                    return True
+                # 新建路线模式：进哪记哪（无参考节点可匹配时新增节点）。
+                # 先给当前节点收尾 —— 它的时间到此为止。
+                self._close_current_node(segment_seconds)
+                return self._append_free_node(area, display, area_id)
 
             if match_index == self.active_run.current_index:
-                self._pending_areas = []
+                # 匹配到**当前节点自己** = 玩家进的就是当前正在计时的区域
+                # （典型：第一次进图时当前节点是预置的第一幕起点）。
+                #
+                # **不要在这里结算时间**：当前节点的时间是「累积」的，
+                # 离开它时才由 ``_close_current_node`` / 跳段分支结算。
+                # 提前 mark_visited 会把这段停留重复计两次。
                 test_log.write(
                     "RUN",
-                    "忽略进图（重复当前区）",
+                    "认领当前节点",
                     area=area,
                     display=display,
                     index=match_index,
                 )
-                return False
+                return True
 
             if match_index > self.active_run.current_index:
-                self._pending_areas = []
                 closed_index = self.active_run.current_index
                 active = self.active_run.nodes[closed_index]
                 if not active.completed:
-                    active.seconds = segment_seconds
-                    active.completed = True
-                    active.skipped = False
+                    active.mark_visited(segment_seconds)
                 for index in range(closed_index + 1, match_index):
                     skip_node = self.active_run.nodes[index]
-                    if skip_node.completed:
-                        # 已经有真实用时 = 玩家确实在这个区域待过。
+                    if skip_node.visited:
+                        # 已经有过真实用时 = 玩家确实在这个区域待过。
                         # 绝不能标成 skipped：skipped 的节点在统计时被排除，
                         # 那段时间会凭空消失（真机事故 2026-10-28：
                         # 24 个真跑过的节点被标 skipped → 28.3 分钟用时蒸发）。
                         continue
-                    skip_node.completed = True
-                    skip_node.skipped = True
-                    skip_node.seconds = None
+                    skip_node.mark_skipped()
                 self.active_run.current_index = match_index
                 # 记录实际到达区域的 area id（幕归属权威来源）
                 if area_id:
@@ -868,80 +883,20 @@ class RunEngine:
 
         return self._append_free_node(area, display, area_id)
 
-    def _track_divergence(
-        self,
-        area: str,
-        display: str,
-        segment_seconds: float,
-        timestamp: datetime | None,
-        area_id: str = "",
-    ) -> bool:
-        """参考路线与实际路径分叉时，按实际进图继续记录。
-
-        单次「进图不在参考里」可能只是回城 / 折返（随后会回到参考路径），所以先挂起；
-        连续 FREE_RECORD_CONFIRM 个都不在参考里 = 参考已断（跨幕 / 走了别的路），
-        此时作废剩余参考节点，把实际经过的区域补成新节点继续计时。
-        """
-        assert self.active_run is not None
-        now = timestamp or datetime.now()
-        if self._is_recent_repeat(area, area_id):
-            # 回城 / 死亡折返：不记录，也不累积「分叉」证据
-            self._pending_areas = []
-            return False
-        if self._pending_areas and self._areas_match(self._pending_areas[-1][0], display):
-            # 同一条进图日志重复出现（日志重读 / 双写）不算新的分叉证据。
-            # 真机事故 2026-10-28：The Coast 连出两条 → 立刻凑满 2 个就判定分叉。
-            return False
-        # area id 一起挂起：分叉后追加的自由节点必须带 id，否则判不出幕
-        # （真机事故 2026-10-28：The Riverways / The Wetlands 无 area_id
-        #  → 96 秒落不进任何幕，幕行合计对不上总时间）。
-        self._pending_areas.append((display, now, area_id))
-        if len(self._pending_areas) < FREE_RECORD_CONFIRM:
-            return False
-
-        pending = self._pending_areas
-        self._pending_areas = []
-        # 当前参考节点收尾时间 = 进入第一个挂起区域之前
-        base = now - timedelta(seconds=max(0.0, segment_seconds))
-        self._close_current_node(max(0.0, (pending[0][1] - base).total_seconds()))
-        # 剩余参考节点已经不可能再跑：标记跳过，避免继续阻塞记录
-        for node in self.active_run.nodes[self.active_run.current_index + 1 :]:
-            if not node.completed:
-                node.completed = True
-                node.skipped = True
-                node.seconds = None
-        for index in range(len(pending) - 1):
-            name, arrived, pending_area_id = pending[index]
-            following = pending[index + 1][1]
-            self.active_run.nodes.append(
-                RunNode(
-                    name=name,
-                    seconds=max(0.0, (following - arrived).total_seconds()),
-                    completed=True,
-                    area_id=pending_area_id,
-                )
-            )
-        last_name, _last_arrived, last_area_id = pending[-1]
-        self.active_run.nodes.append(
-            RunNode(name=last_name, completed=False, area_id=last_area_id)
-        )
-        self.active_run.current_index = len(self.active_run.nodes) - 1
-        test_log.write(
-            "RUN",
-            "参考路线分叉，转为实际记录",
-            areas=[name for name, _, _ in pending],
-            index=self.active_run.current_index,
-        )
-        return True
-
     def _can_free_record(self) -> bool:
-        """当前节点是否已是参考路线的最后一个节点（之后按实际进图自由记录）。"""
+        """是否可以按实际进图自由记录（新增节点）。
+
+        **仅新建路线模式**（无参考路线）成立。
+
+        参考路线模式下**永远不自由记录**：节点集合恒等于参考路线，
+        不在「当前节点之后」的参考节点出现时，时间记给当前节点
+        （用户 2026-10-29 定稿规则）。
+        """
         if not self.active_run:
             return False
-        nodes = self.active_run.nodes
-        if not nodes:
-            return True
-        return self._next_uncompleted_index(self.active_run.current_index + 1) >= len(nodes)
+        if self.active_run.is_reference_mode:
+            return False
+        return True
 
     def _close_current_node(self, segment_seconds: float) -> None:
         """把当前节点收尾（节点时间 = 该区域停留时长）。"""
@@ -956,13 +911,9 @@ class RunEngine:
         if self._is_unvisited_seed(node):
             # 预置的第一幕起点玩家根本没进过（新建路线时人已经在别的幕）：
             # 标记跳过，不能记一段假时间。
-            node.completed = True
-            node.skipped = True
-            node.seconds = None
+            node.mark_skipped()
             return
-        node.seconds = segment_seconds
-        node.completed = True
-        node.skipped = False
+        node.mark_visited(segment_seconds)
 
     def _is_unvisited_seed(self, node: RunNode) -> bool:
         """该节点是否是「预置但玩家从未真正进过」的第一幕起点。
@@ -1008,7 +959,10 @@ class RunEngine:
           （回城 / 无 id 的自由记录场景）。
 
         只在**已跑过**的节点里找：玩家从 Act 3 回到 Act 1、或同一幕内来回跑，
-        都不该再产生新节点 —— 应该并回原节点继续计时。
+        都不该再产生新节点。
+
+        调用方的处理（用户 2026-10-29 定稿）：识别到重复后**当作没有换节点** ——
+        不新增节点，时间也不并回原节点，这段时间算在当前节点上。
         """
         if not self.active_run:
             return None
@@ -1025,38 +979,6 @@ class RunEngine:
             if self._areas_match(area, node.name):
                 return index
         return None
-
-    def _find_visited_match(self, area: str, area_id: str) -> int | None:
-        """找「**真正跑过**的同一地点」节点（回退识别，参考路线模式同样适用）。
-
-        只认 ``completed and not skipped``：
-        ``前进跳段`` 标成 skipped 的参考节点玩家根本没进过，不能当回退目标。
-        身份规则与 :meth:`_find_revisited_node` 一致（area id 优先，其次区域名），
-        因此 PoE1 的 Act 6 复用 Act 1 区域名不会被误并。
-        """
-        if not self.active_run:
-            return None
-        for index, node in enumerate(self.active_run.nodes):
-            if not node.completed or node.skipped:
-                continue
-            if self._node_matches(node, area, area_id):
-                return index
-        return None
-
-    def _merge_into_revisited(self, index: int, segment_seconds: float) -> bool:
-        """回到已去过的地点：不新增节点，把停留时间并回原节点。"""
-        assert self.active_run is not None
-        node = self.active_run.nodes[index]
-        node.seconds = (node.seconds or 0.0) + segment_seconds
-        # 回到该地点 → 它成为当前节点，继续计时
-        self.active_run.current_index = index
-        test_log.write(
-            "RUN",
-            "回到已去过的地点，并回原节点",
-            index=index,
-            name=node.name,
-        )
-        return True
 
     def _merge_into_active_trial(
         self,
@@ -1151,9 +1073,7 @@ class RunEngine:
         if self.active_run.current_index < len(self.active_run.nodes):
             node = self.active_run.nodes[self.active_run.current_index]
             if not node.completed:
-                node.seconds = segment_seconds
-                node.completed = True
-                node.skipped = False
+                node.mark_visited(segment_seconds)
                 self.active_run.current_index = self._next_uncompleted_index(self.active_run.current_index + 1)
                 self._persist()
                 self._emit_state()
@@ -1182,53 +1102,80 @@ class RunEngine:
         return self._area_id_compatible(node, area_id)
 
     def _find_forward_match(self, area: str, area_id: str = "") -> int | None:
-        """仅在当前节点之后查找匹配（只认向前推进）。
+        """找「下一个」参考节点。
 
-        路线里同名区域出现多次时（PoE1 的 Act 6–10 复用 Act 1–5 区域名），
-        只在一定窗口内匹配：否则 Act 1 死亡回城会命中 Act 6 的同名节点，
-        把中间几十个节点全部标成「跳过」。
-        名字唯一的区域保持原有行为（允许远距离跳段）。
+        **匹配范围 = ``[current_index .. 末尾]``**（含当前节点本身）。
 
-        ``area_id`` 已知时，候选节点的 area id 也必须一致 ——
-        否则 PoE1 迷宫里三个同名 boss 实例会被误判成同一个。
+        用户 2026-10-29 定稿的规则：
 
-        **area id 精确匹配不受窗口限制**：area id 是区域的唯一身份
-        （``1_2_15`` = The Fellshrine Ruins），不可能是别的区域。
-        窗口存在的唯一理由是「按名字匹配」时的同名歧义。
-        真机事故 2026-10-28：参考路线把 Act 3 的 The Fellshrine Ruins 插在
-        Act 2 节点中间（index 37），玩家实打实跑到它时因超出 15 窗口被拒
-        → 累积 2 次「未知区域」→ 判定路线分叉 → 剩余 100 个节点全废、
-        玩家真跑过的 16 个节点被标成跳过 → 28 分钟用时凭空消失。
+            参考路线 A B C D E，实际 A C B D E。
+            玩家在 C 时，只在「C 之后」（D、E）里找下一个参考节点。
+            B 在「C 之后」这个范围里没有记录 → 玩家回 B 时这段时间**记给 C**。
+
+        为什么**含**当前节点：
+            第一次进图时当前节点就是「正在计时的那个」（可能是预置的第一幕起点），
+            玩家进的就是它 —— 必须能匹配上，否则会凭空新增一个重复节点。
+
+        为什么**不含**当前节点之前的：
+            回到 C 之前的节点（A、B）不在搜索范围内 → 落入「记给当前节点」分支。
+            这正是用户要的规则：回旧节点不换节点、时间归当前节点。
+
+        **两阶段匹配**（解决同名节点歧义 + 保留远距离精确匹配）：
+
+        1. **窗口内按名匹配**：``[current_index, current_index + MAX_FORWARD_MATCH)``
+           范围内第一个名字 / area id 匹配的节点。
+           窗口存在的理由：PoE1 的 Act 6–10 复用 Act 1–5 的区域名，
+           玩家回 Act 1 城镇时不能跳到远处 Act 6 的同名节点。
+
+        2. **窗口外只接受 area id 精确匹配**：area id 是区域的唯一身份，
+           ``1_2_15`` = The Fellshrine Ruins，不可能指别的区域。
+           真机事故 2026-10-28：参考路线把 Act 3 的 The Fellshrine Ruins 插在
+           Act 2 节点中间（index 37），玩家实打实跑到它时因超出 15 窗口被拒
+           → 累积 2 次「未知区域」→ 判定路线分叉 → 剩余 100 个节点全废。
+           现在这种情况由 area id 精确命中兜住，不会误判分叉。
+
+        已 visited（本次已跑过）与 skipped（跳段判定没去过）的节点都不再匹配。
         """
         assert self.active_run is not None
         nodes = self.active_run.nodes
         start = max(0, self.active_run.current_index)
+        # 名字在整个路线里唯一 → 没有同名歧义 → 全程可跳（远距离跳段）。
+        # 名字出现多次（PoE1 的 Act 6–10 复用 Act 1–5 区域名）→ 限定窗口。
         occurrences = sum(1 for node in nodes if self._areas_match(area, node.name))
-        limit = len(nodes) if occurrences <= 1 else min(len(nodes), start + MAX_FORWARD_MATCH)
+        if occurrences <= 1:
+            limit = len(nodes)
+        else:
+            limit = min(len(nodes), start + MAX_FORWARD_MATCH)
+
+        def _matchable(node: RunNode) -> bool:
+            if node.visited:
+                # 已经记过用时 = 本次已经跑过这个节点，不再重复匹配
+                return False
+            if node.skipped:
+                # 跳段时被判定「本次没去过」的参考节点，不再作为匹配目标。
+                # 否则玩家走回它时会被当成「下一个参考节点」，
+                # 违反「只看当前节点之后」的规则（参考路线 A B C D E，
+                # 玩家实际 A C B D E：跳到 C 时 B 被标 skipped，
+                # 之后玩家进 B 应当归 C，而不是跳回 B）。
+                return False
+            return True
+
+        # 阶段 1：窗口内匹配（按名 / area id 都行）
         for index in range(start, limit):
             node = nodes[index]
-            if node.completed and not node.skipped:
+            if not _matchable(node):
                 continue
             if self._node_matches(node, area, area_id):
                 return index
-        for index in range(limit, len(nodes)):
-            node = nodes[index]
-            if node.completed and not node.skipped:
-                continue
-            if not self._node_matches(node, area, area_id):
-                continue
-            if area_id and node.area_id == area_id:
-                # area id 精确命中 = 唯一身份，跳过窗口限制
-                return index
-            test_log.write(
-                "RUN",
-                "忽略进图（匹配点超出识别窗口）",
-                area=area,
-                current_index=start,
-                matched_index=index,
-                window=MAX_FORWARD_MATCH,
-            )
-            break
+
+        # 阶段 2：窗口外只认 area id 精确匹配（唯一身份，不受窗口限制）
+        if area_id:
+            for index in range(limit, len(nodes)):
+                node = nodes[index]
+                if not _matchable(node):
+                    continue
+                if node.area_id and node.area_id == area_id:
+                    return index
         return None
 
     def _next_uncompleted_index(self, start: int = 0) -> int:
