@@ -13,6 +13,24 @@ $DistName = "RouteLens"
 $ZipName = "RouteLens-v$Version-win64.zip"
 Write-Host "==> version $Version"
 
+# 发布闸门：测试不过 → 不许打包。
+#
+# 为什么加这一步（真机事故 2026-10-29）：
+#   v0.1.13 重写了整套路线匹配逻辑并通过 213 条测试，然后上线 → 用户一点
+#   「重置 Run」就再也不换节点。根因是 reset_run() 漏传了一个字段，
+#   而**没有任何一条测试跑过「重置」这条路径** —— 旧测试全是
+#   「构造场景 → 断言我期望的值」，每条只覆盖一个函数。
+#
+#   所以闸门跑的不只是普通单测，还包括 tests/test_operation_sequence_invariants.py
+#   —— 它模拟一整串真实操作（新 Run → 推进 → 回旧节点 → 重置 → 撤销 →
+#   存路线），每步检查**系统不变量**（时间守恒 / 模式自洽 / 节点集合恒定），
+#   不预设具体数字。
+Write-Host "==> preflight: run tests (release gate)"
+python -m pytest tests -q
+if ($LASTEXITCODE -ne 0) {
+    throw "Tests failed ($LASTEXITCODE). Refusing to build. Fix them first."
+}
+
 Write-Host "==> install pyinstaller"
 python -m pip install -q "pyinstaller>=6.0" customtkinter pystray Pillow
 

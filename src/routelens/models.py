@@ -120,6 +120,16 @@ class RunNode:
     area_id: str = ""
     # 试炼进门节点：每次试炼都要记（area id 相同也不能去重）
     is_trial_entry: bool = False
+    # **本节点来自参考路线**（不是自由记录出来的）。
+    #
+    # 这是「参考路线模式 vs 新建路线模式」的**唯一权威信号**。
+    # 为什么不能靠别的：
+    #   - 「有没有 reference_route_id」→ 空白路线在 UI 里也是一条 route，有 id
+    #   - 「节点总数 > 1」→ 空白路线跑到第 2 个区域就 > 1 了（进哪记哪）
+    #   - 「节点有没有 seconds」→ 参考路线里还没跑到/被跳过的节点也没有
+    #
+    # 参考路线带进来的节点 → True；空白路线的种子起点、自由记录的新节点 → False。
+    from_reference: bool = False
 
     @property
     def visited(self) -> bool:
@@ -146,6 +156,7 @@ class RunNode:
             "skipped": self.skipped,
             "area_id": self.area_id,
             "is_trial_entry": self.is_trial_entry,
+            "from_reference": self.from_reference,
         }
 
     @classmethod
@@ -165,6 +176,8 @@ class RunNode:
             skipped=skipped,
             area_id=str(data.get("area_id", "") or ""),
             is_trial_entry=bool(data.get("is_trial_entry", False)),
+            # 老存档没有这个字段 → 按「有参考路线 + 多节点」推断（见 ActiveRun.from_dict）
+            from_reference=bool(data.get("from_reference", False)),
         )
 
 
@@ -191,9 +204,18 @@ class ActiveRun:
     #            时间记给当前节点，不新增节点、不存在「路线分叉」。
     #   False → 新建路线模式：进哪记什么（但重复/藏身处仍按规则处理）。
     #
-    # 判据是「**本次运行有没有参考节点**」，不是「有没有 reference_route_id」：
-    # 空白路线也会带一个 route_id（用来标记来源），但它没有参考节点。
+    # 权威来源 = ``reference_node_count``（本次运行带进来的**参考**节点数）。
+    # 不用「节点总数」也不用「有没有 route_id」判断：
+    #   - 空白路线在 UI 里**也是**一条 route（有 route_id），跑起来还会不断
+    #     新增节点 → 这两个信号都会误判。
+    #   - 只有「这批节点里有多少个是参考来的」才是权威事实。
+    #
+    # 兼容说明：本字段仍会序列化（老存档靠它自愈），但**写入侧一律走
+    # :meth:`create` 工厂，不要直接给 ActiveRun(...) 传参。
     is_reference_mode: bool = False
+    # 本次运行带进来的**参考**节点数（空白路线 = 0）。
+    # 存档里存这个值，是为了让加载时能自愈 is_reference_mode 被写坏的情况。
+    reference_node_count: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -210,22 +232,47 @@ class ActiveRun:
             "campaign_over": self.campaign_over,
             "game_id": self.game_id,
             "is_reference_mode": self.is_reference_mode,
+            "reference_node_count": self.reference_node_count,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> ActiveRun:
         nodes = [RunNode.from_dict(item) for item in data.get("nodes", [])]
         raw_mode = data.get("is_reference_mode")
+        raw_count = data.get("reference_node_count")
+        if raw_count is None:
+            # 老存档没有这个字段 → 从节点的 from_reference 标记数推断
+            reference_count = sum(1 for n in nodes if n.from_reference)
+            if reference_count == 0:
+                # 更老的存档连 from_reference 都没有 → 退回「有 route_id + 多节点」
+                # （空白路线在 UI 里也是 route，这条推断对空白路线可能偏保守，
+                #   但空白路线本来就不该有 route_id，除非用户选了自建空白路线 —— 那时
+                #   它有参考节点，判成参考模式是对的）
+                reference_count = (
+                    len(nodes) if (data.get("reference_route_id") and len(nodes) > 1) else 0
+                )
+            # 补齐节点标记：老存档的节点没有 from_reference → 按推断出的
+            # 参考节点数补上前 N 个，保证「标记数 == reference_node_count」
+            # （否则 I1 不变量会失败：计数说有 145 个参考节点，标记却是 0）
+            if reference_count > 0:
+                for node in nodes[:reference_count]:
+                    node.from_reference = True
+        else:
+            reference_count = int(raw_count or 0)
+            # 存档里的节点缺 from_reference 标记（老存档）→ 补上
+            if reference_count > 0:
+                marked = sum(1 for n in nodes if n.from_reference)
+                if marked == 0:
+                    for node in nodes[:reference_count]:
+                        node.from_reference = True
         if raw_mode is None:
-            # 老存档没有这个字段 → 按「有没有参考节点」推断
-            # （空白路线有 route_id 但只有 1 个种子节点 → 不是参考模式）
-            raw_mode = bool(data.get("reference_route_id")) and len(nodes) > 1
-        elif not raw_mode and data.get("reference_route_id") and len(nodes) > 1:
-            # 自愈：字段说「新建路线模式」，但存档里明明有多个参考节点。
+            raw_mode = reference_count > 0
+        elif not raw_mode and reference_count > 0:
+            # 自愈：字段说「新建路线模式」，但存档里明明有参考节点。
             # 真机事故 2026-10-29 14:16：reset_run() 漏传 is_reference_mode
             # → 存档被写成 False，节点却还是 145 个参考节点
             # → 每次进图都被判成「重复进入已去过的地点」→ 永不换节点。
-            # 字段与事实矛盾时**以事实为准**：多节点 + 有 route_id = 参考路线模式。
+            # 字段与事实矛盾时**以事实为准**。
             raw_mode = True
         return cls(
             run_id=str(data.get("run_id", "")),
@@ -241,6 +288,59 @@ class ActiveRun:
             campaign_over=bool(data.get("campaign_over", False)),
             game_id=str(data.get("game_id", "") or ""),
             is_reference_mode=bool(raw_mode),
+            reference_node_count=reference_count,
+        )
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        run_id: str,
+        nodes: list[RunNode],
+        reference_route_id: str | None = None,
+        reference_route_name: str = "",
+        started_at: str = "",
+        game_id: str = "",
+        is_paused: bool = False,
+        is_active: bool = True,
+    ) -> ActiveRun:
+        """**唯一**的运行状态构造入口。
+
+        为什么必须收口：
+            真机事故 2026-10-29 14:16 —— ``reset_run()`` 直接调 ``ActiveRun(...)``
+            时漏传 ``is_reference_mode`` / ``game_id``，还丢了每个节点的 ``area_id``，
+            导致重置后再也不换节点。同一份「构造运行状态」的知识散在两处，
+            改一处忘另一处 = 上线一个静默致命 bug。
+
+        规则（**看节点自己的来源标记**，不看 route_id、不看节点总数）：
+
+            节点里存在 ``from_reference=True`` → 参考路线模式
+            全部是自由记录/种子起点 → 新建路线模式（空白路线）
+
+        为什么不能用别的信号：
+            - 「有没有 reference_route_id」→ 空白路线在 UI 里**也是**一条 route
+              （有 id），实测 ``new_run(None)`` 只是碰巧传 None；用户自建的空白
+              路线被选中时走的是「有 reference」的分支 → 有 id。
+            - 「节点总数 > 1」→ 空白路线跑到第 2 个区域就 > 1 了（进哪记哪）。
+            - 「节点有没有 seconds」→ 参考路线里还没跑到/被跳过的节点也没有。
+
+        唯一权威信号 = 「这批节点里有多少个是参考路线带进来的」。
+
+        所有「新建运行 / 重置运行」都必须走这里，不要直接 ``ActiveRun(...)``。
+        """
+        reference_count = sum(1 for node in nodes if node.from_reference)
+        return cls(
+            run_id=run_id,
+            reference_route_id=reference_route_id,
+            reference_route_name=reference_route_name,
+            nodes=nodes,
+            started_at=started_at,
+            is_paused=is_paused,
+            is_active=is_active,
+            game_id=game_id,
+            # 参考路线模式 = **本次运行带进来的参考节点数 > 0**。
+            is_reference_mode=reference_count > 0,
+            reference_node_count=reference_count,
         )
 
     @property

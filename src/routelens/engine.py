@@ -120,13 +120,17 @@ class RunEngine:
         self._sync_elapsed()
         now = datetime.now().isoformat(timespec="seconds")
         nodes: list[RunNode] = []
-        has_reference_nodes = False
         if reference:
             nodes = [
-                RunNode(name=node.name, completed=False, area_id=node.area_id)
+                RunNode(
+                    name=node.name,
+                    completed=False,
+                    area_id=node.area_id,
+                    # 标记「来自参考路线」—— 参考/新建模式的唯一权威信号
+                    from_reference=True,
+                )
                 for node in filter_hideout_nodes(reference.nodes)
             ]
-            has_reference_nodes = bool(nodes)
         # 本次运行的游戏归属：路线自带的优先，其次才用设置里的当前游戏。
         # 设置默认 poe2；跑 PoE1 路线时若按设置判，10 幕会被判成 4 幕。
         run_game = str(
@@ -137,16 +141,13 @@ class RunEngine:
             # 预置 node 0，玩家一进图就能对上；否则首个区域永远缺失。
             # 注意：预置的种子节点**不算**参考节点 → 仍是新建路线模式。
             nodes = self._seed_campaign_start_nodes(run_game)
-        run = ActiveRun(
+        run = ActiveRun.create(
             run_id=str(uuid.uuid4()),
             reference_route_id=reference.route_id if reference else None,
             reference_route_name=reference.name if reference else "",
             nodes=nodes,
             started_at=now,
             game_id=run_game,
-            # 参考路线模式 = **本次运行有参考节点**。
-            # 空白路线也带 route_id（标记来源），但它没有参考节点 → 新建路线模式。
-            is_reference_mode=has_reference_nodes,
         )
         self.active_run = run
         self._timer_started_at = None
@@ -429,27 +430,33 @@ class RunEngine:
         run_game = self.active_run.game_id or self._run_game_id()
         now = datetime.now().isoformat(timespec="seconds")
         nodes: list[RunNode] = []
-        # 参考路线模式 = **本次运行有参考节点**（与 new_run 同一判据）。
-        # 注意：空白路线也带 route_id（标记来源），但它没有参考节点 → 不是参考模式。
-        has_reference_nodes = False
         if reference:
             nodes = [
-                RunNode(name=node.name, completed=False, area_id=node.area_id)
+                RunNode(
+                    name=node.name,
+                    completed=False,
+                    area_id=node.area_id,
+                    # 标记「来自参考路线」—— 参考/新建模式的唯一权威信号
+                    from_reference=True,
+                )
                 for node in filter_hideout_nodes(reference.nodes)
             ]
-            has_reference_nodes = bool(nodes)
         elif self.active_run.is_reference_mode and self.active_run.nodes:
             # 原路线文件取不到了（被删 / 改名 / 路线列表刷新）→ 直接复用本次
             # 运行的参考节点。重置 = 同一条路线清零，不是换一条路线。
             nodes = [
-                RunNode(name=node.name, completed=False, area_id=node.area_id)
+                RunNode(
+                    name=node.name,
+                    completed=False,
+                    area_id=node.area_id,
+                    from_reference=node.from_reference,
+                )
                 for node in self.active_run.nodes
             ]
-            has_reference_nodes = bool(nodes)
         else:
             # 自由路线重置：同样回到第一幕固定起点
             nodes = self._seed_campaign_start_nodes(run_game)
-        self.active_run = ActiveRun(
+        self.active_run = ActiveRun.create(
             run_id=str(uuid.uuid4()),
             reference_route_id=route_id,
             reference_route_name=route_name,
@@ -457,10 +464,6 @@ class RunEngine:
             started_at=now,
             is_paused=True,
             game_id=run_game,
-            # 真机事故 2026-10-29 14:16：这里原本漏传 → 重置后 is_reference_mode=False，
-            # 但 nodes 仍是 145 个参考节点 → 走新建路线分支 → 每个区域都被
-            # 判成「重复进入已去过的地点」→ 永不换节点（26 分钟全堆在 node 0）。
-            is_reference_mode=has_reference_nodes,
         )
         self._timer_started_at = None
         self._last_area = ""

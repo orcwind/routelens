@@ -360,6 +360,109 @@ class CorruptedModeHealsOnLoadTests(unittest.TestCase):
         self.assertFalse(run.is_reference_mode)
 
 
+class ModeDiscriminationTests(_Case):
+    """参考路线模式 vs 新建路线模式：**必须分得清**。
+
+    这组测试是 v0.1.14 事故的正面防线。之前的判据（有没有 route_id /
+    节点数 > 1）都会在「空白路线被选中」或「空白路线跑到第 2 个区域」时误判。
+
+    权威信号 = 节点自己的 ``from_reference`` 标记。
+    """
+
+    def test_blank_route_with_route_id_is_free_mode(self) -> None:
+        """空白路线（用户自建、有 route_id、但没有参考节点）→ 新建路线模式。"""
+        blank = self._reference([])  # 有 route_id，但节点为空
+        blank.route_id = "blank-1"
+        self.engine.new_run(blank)
+
+        run = self.engine.active_run
+        assert run is not None
+        self.assertFalse(
+            run.is_reference_mode,
+            "空白路线（有 route_id 但无参考节点）不能是参考路线模式",
+        )
+
+    def test_blank_route_keeps_free_mode_after_many_areas(self) -> None:
+        """空白路线跑到多个区域后**仍然是**新建路线模式（进哪记哪）。"""
+        blank = self._reference([])
+        blank.route_id = "blank-2"
+        self.engine.new_run(blank)
+
+        for area in ("Zone A", "Zone B", "Zone C", "Zone D"):
+            self.engine.simulate_area(area, write_client=False)
+
+        run = self.engine.active_run
+        assert run is not None
+        self.assertGreater(len(run.nodes), 1, "空白路线应该新增了节点")
+        self.assertFalse(
+            run.is_reference_mode,
+            "空白路线节点变多后仍必须是新建路线模式",
+        )
+
+    def test_real_reference_route_is_reference_mode(self) -> None:
+        """真参考路线 → 参考路线模式。"""
+        self.engine.new_run(self._reference(["A", "B", "C"]))
+
+        run = self.engine.active_run
+        assert run is not None
+        self.assertTrue(run.is_reference_mode)
+        self.assertEqual(run.reference_node_count, 3)
+
+    def test_blank_route_keeps_free_mode_after_reset(self) -> None:
+        """空白路线重置后仍是新建路线模式（不能被重置成参考模式）。"""
+        blank = self._reference([])
+        blank.route_id = "blank-3"
+        self.engine.new_run(blank)
+        self.engine.simulate_area("Zone A", write_client=False)
+
+        self.engine.reset_run()
+
+        run = self.engine.active_run
+        assert run is not None
+        self.assertFalse(run.is_reference_mode, "空白路线重置后仍是新建路线模式")
+
+    def test_reference_route_survives_reset_as_reference_mode(self) -> None:
+        """参考路线重置后仍是参考路线模式（v0.1.14 事故的正面防线）。"""
+        self.engine.new_run(self._reference(["A", "B", "C"]))
+        self.engine.simulate_area("A", write_client=False)
+
+        self.engine.reset_run()
+
+        run = self.engine.active_run
+        assert run is not None
+        self.assertTrue(run.is_reference_mode)
+        self.assertEqual(run.reference_node_count, 3)
+
+    def test_self_saved_route_selected_is_reference_mode(self) -> None:
+        """用户自己跑出来的路线再被选中 → 参考路线模式（用它当参考）。
+
+        这是产品定义：「从自己的已经跑过的角色读取路线」= 参考模式。
+        存路线走 ``create_route_from_run``，节点带用时 → 选中后当参考。
+        """
+        saved = self._reference(["河岸", "Zone A", "Zone B"])
+        saved.route_id = "saved-1"
+        self.engine.new_run(saved)
+
+        run = self.engine.active_run
+        assert run is not None
+        self.assertTrue(run.is_reference_mode, "自建路线被选中 = 参考路线模式")
+        self.assertEqual(run.reference_node_count, 3)
+
+    def test_free_run_button_is_free_mode_with_seed(self) -> None:
+        """空白路线按钮（new_run(None)）→ 自由路线模式。
+
+        UI 的空白路线是独立入口（free_run_poe1 / free_run_poe2），
+        走 ``new_run(None)`` → 只种一个第一幕起点 → 自由模式。
+        """
+        self.engine.new_run(None)
+
+        run = self.engine.active_run
+        assert run is not None
+        self.assertFalse(run.is_reference_mode, "空白路线按钮 = 新建路线模式")
+        self.assertEqual(run.reference_node_count, 0)
+        self.assertIsNone(run.reference_route_id)
+
+
 class RunNodeInvariantTests(unittest.TestCase):
     """``RunNode`` 唯一不变量：seconds 有值 ⇔ 本次到过；两者互斥。"""
 
