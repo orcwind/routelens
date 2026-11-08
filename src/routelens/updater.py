@@ -189,11 +189,11 @@ def _write_apply_script(
         f'set "INSTALL={install_dir}"',
         f'set "PAYLOAD={payload_dir}"',
         f'set "EXE={exe_name}"',
-        "ping -n 3 127.0.0.1 >nul",
+        "timeout /t 3 /nobreak >nul",
         ":wait",
         'tasklist /FI "IMAGENAME eq %EXE%" 2>nul | find /I "%EXE%" >nul',
         "if not errorlevel 1 (",
-        "  ping -n 2 127.0.0.1 >nul",
+        "  timeout /t 2 /nobreak >nul",
         "  goto wait",
         ")",
         'REM user data lives in %APPDATA%\\RouteLens now; exe dir only has program files',
@@ -204,6 +204,25 @@ def _write_apply_script(
     ]
     script.write_text("\r\n".join(lines) + "\r\n", encoding="ascii", errors="ignore")
     return script
+
+
+def _spawn_hidden_apply(cmd: list[str], *, cwd: str) -> subprocess.Popen[bytes]:
+    """启动更新 bat，不弹出控制台（避免 ping/cmd 黑窗打扰用户）。"""
+    kwargs: dict = {
+        "cwd": cwd,
+        "close_fds": True,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if sys.platform == "win32":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0
+        no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        kwargs["startupinfo"] = si
+        kwargs["creationflags"] = no_window | 0x00000200  # CREATE_NEW_PROCESS_GROUP
+    return subprocess.Popen(cmd, **kwargs)
 
 
 def prepare_and_launch_update(release: ReleaseInfo, *, install_dir: Path | None = None) -> Path:
@@ -237,16 +256,7 @@ def prepare_and_launch_update(release: ReleaseInfo, *, install_dir: Path | None 
         payload_dir=payload_copy,
         exe_name=exe_name,
     )
-    flags = 0x00000008 | 0x00000200
-    subprocess.Popen(
-        ["cmd.exe", "/c", str(script)],
-        cwd=str(work),
-        close_fds=True,
-        creationflags=flags,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    _spawn_hidden_apply(["cmd.exe", "/c", str(script)], cwd=str(work))
     return script
 
 
